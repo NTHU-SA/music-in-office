@@ -155,7 +155,7 @@ Windows runner 一起建置兩個獨立交付檔案，成功後 Release 附上 E
 各自 SHA-256 與自動更新說明。使用內建 `GITHUB_TOKEN`，不需另設發布 token。
 
 發布前同步 `pyproject.toml`、Python `__init__.py`、desktop／launcher `.csproj`、
-extension `manifest.json` 的版本；appx manifest 使用四段版本（例如 `0.1.1.0`）。
+extension `manifest.json` 的版本；appx manifest 使用四段版本（例如 `0.1.2.0`）。
 版本與 tag 不一致會停止發布。EXE／ZIP 未簽署，不會自動安裝 extension 或 runtime。
 
 ## 限制與實機驗收
