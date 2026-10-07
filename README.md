@@ -22,7 +22,9 @@ Token 只在辦公室電腦設定，不要貼到 Discord、GitHub 或對話中�
 
 ## 執行 exe
 
-完成下方建置後，執行 `dist\OfficeMusicDesktop\OfficeMusicDesktop.exe`。
+從 [GitHub Releases](https://github.com/NTHU-SA/music-in-office/releases) 下載
+`OfficeMusicBot-win-x64.zip`，解壓後執行 `OfficeMusicDesktop\OfficeMusicDesktop.exe`。
+也可以完成下方建置後，執行 `dist\OfficeMusicDesktop\OfficeMusicDesktop.exe`。
 搬到辦公室電腦時，複製完整資料夾，或解壓 `dist\OfficeMusicBot-win-x64.zip`；
 **不能只複製一個 exe**。可攜版包含 .NET、Windows App SDK 與播放引擎，
 目標電腦不需要另外安裝 Python 或 .NET，但需要已安裝 Edge。
@@ -172,6 +174,28 @@ PyInstaller 會包含 Python、套件及 Playwright driver，不包含 Edge、to
 原生介面透過私有 stdin/stdout 管線控制引擎；token 不放在命令列引數，
 亦不進入正常 log。視窗與引擎分離，連線或引擎失敗後可保留視窗並重試。
 exe 需在 Windows 建置；發行資料夾與 ZIP 放在 `dist`，不提交到 Git。
+
+## 自動發布版本
+
+GitHub Actions 的 `Release` workflow 在推送 `vMAJOR.MINOR.PATCH` tag 時自動執行，
+例如 `v0.1.0`。Windows runner 會執行測試與 lint、以 PyInstaller 建置播放引擎，
+再編譯 self-contained WinUI x64 可攜版並打包。所有步驟成功後才建立
+GitHub Release，附上 `OfficeMusicBot-win-x64.zip`、SHA-256 checksum 與自動產生的更新說明。
+不需要額外設定發布 token，workflow 使用 GitHub 提供的 `GITHUB_TOKEN`。
+
+發布前，將 `pyproject.toml`、`src\office_music_bot\__init__.py`、
+`OfficeMusicDesktop\OfficeMusicDesktop.csproj` 的版本同步更新，
+並將 `OfficeMusicDesktop\Package.appxmanifest` 設為對應的四段版本
+（例如 `0.1.0.0`）。版本與 tag 不一致時，workflow 會中止而不發布。
+確認包含 workflow 與版本更新的 commit 已合併至預計發布的分支，再執行：
+
+```powershell
+git tag -a v0.1.0 -m "Release v0.1.0"
+git push origin v0.1.0
+```
+
+在 repository 的 Actions 頁面確認 `Release` workflow 成功後，即可從 Releases 下載。
+ZIP 未經程式碼簽署；解壓後需要保留完整資料夾，目標電腦仍須安裝 Edge。
 
 ## 驗收與限制
 
