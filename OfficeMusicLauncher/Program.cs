@@ -4,6 +4,7 @@ using System.IO.Compression;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
+using System.Security.Principal;
 
 namespace OfficeMusicLauncher;
 
@@ -84,7 +85,6 @@ internal static class Program
 
 internal static class PortablePayload
 {
-    private const string CacheMutexName = @"Local\OfficeMusicBot.Cache";
     internal static readonly string[] RequiredFiles =
     [
         "OfficeMusicDesktop.exe", "OfficeMusicDesktop.pri", "App.xbf",
@@ -97,7 +97,7 @@ internal static class PortablePayload
         string hash = Convert.ToHexStringLower(SHA256.HashData(payload));
         payload.Position = 0;
         string directory = Path.Combine(cacheRoot, hash);
-        using var mutex = new Mutex(false, $@"Local\OfficeMusicBot.Extract.{hash}");
+        using var mutex = new Mutex(false, ExtractionMutexName(CurrentUserSid(), hash));
         bool acquired = false;
         try
         {
@@ -146,7 +146,7 @@ internal static class PortablePayload
 
     internal static IDisposable LockCache(string cacheRoot)
     {
-        var mutex = new Mutex(false, CacheMutexName);
+        var mutex = new Mutex(false, CacheMutexName(CurrentUserSid()));
         try
         {
             bool acquired;
@@ -165,6 +165,21 @@ internal static class PortablePayload
             throw;
         }
     }
+
+    internal static string CurrentUserSid()
+    {
+        using WindowsIdentity identity = WindowsIdentity.GetCurrent();
+        return identity.User?.Value
+            ?? throw new InvalidOperationException("The current Windows identity has no SID.");
+    }
+
+    internal static string CacheMutexName(string sid) => MutexName(sid, "Cache");
+
+    internal static string ExtractionMutexName(string sid, string hash) =>
+        MutexName(sid, $"Extract.{hash}");
+
+    private static string MutexName(string sid, string resource) =>
+        $@"Global\OfficeMusicBot.{sid}.{resource}";
 
     internal static void Cleanup(string cacheRoot, string currentDirectory,
         IReadOnlyCollection<string>? runningExecutables = null)
@@ -234,7 +249,7 @@ internal static class PortablePayload
                 try
                 {
                     using var extraction = new Mutex(false,
-                        $@"Local\OfficeMusicBot.Extract.{Path.GetFileName(path)}");
+                        ExtractionMutexName(CurrentUserSid(), Path.GetFileName(path)));
                     bool acquired;
                     try { acquired = extraction.WaitOne(0); }
                     catch (AbandonedMutexException) { acquired = true; }

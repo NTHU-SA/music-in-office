@@ -1,13 +1,26 @@
+using System.Diagnostics;
 using System.IO.Compression;
 using OfficeMusicLauncher;
 
 internal static class LauncherTests
 {
-    private static void Main()
+    private static void Main(string[] args)
     {
-        string root = Path.Combine(Path.GetTempPath(), $"OfficeMusicLauncherTests-{Guid.NewGuid():N}");
+        if (args is ["--hold-lock", string name])
+        {
+            using var mutex = new Mutex(false, name);
+            mutex.WaitOne();
+            Console.WriteLine("locked");
+            Console.ReadLine();
+            mutex.ReleaseMutex();
+            return;
+        }
+
+        string root = Path.Combine(Path.GetTempPath(),
+            $"OfficeMusicLauncherTests-{Guid.NewGuid():N}");
         try
         {
+            TestMutexNames();
             byte[] payload = CreatePayload();
             string directory = Extract(payload, root);
             Assert(Directory.GetFiles(directory, "*", SearchOption.AllDirectories).Length ==
@@ -28,12 +41,74 @@ internal static class LauncherTests
             ExpectFailure<IOException>(() => Extract(CreatePayload(invalidPath: true), root));
             Assert(!File.Exists(Path.Combine(root, "escaped.txt")), "Paths must not escape the cache.");
             TestCleanup(root);
-            Console.WriteLine("Launcher tests passed: extraction, reuse, upgrades, concurrency, " +
-                "tampering, missing files, invalid paths and safe cleanup.");
+            Console.WriteLine("Launcher tests passed: cross-process locks, extraction, reuse, " +
+                "upgrades, concurrency, tampering, missing files, invalid paths and safe cleanup.");
         }
         finally
         {
             if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    private static void TestMutexNames()
+    {
+        string sid = PortablePayload.CurrentUserSid();
+        string otherSid = sid == "S-1-5-18" ? "S-1-5-19" : "S-1-5-18";
+        string hash = new string('a', 64);
+        string cacheName = PortablePayload.CacheMutexName(sid);
+        string extractionName = PortablePayload.ExtractionMutexName(sid, hash);
+        Assert(cacheName == $@"Global\OfficeMusicBot.{sid}.Cache" &&
+            extractionName == $@"Global\OfficeMusicBot.{sid}.Extract.{hash}",
+            "Both locks must use the same cross-session, SID-keyed naming scheme.");
+        Assert(cacheName == PortablePayload.CacheMutexName(sid) &&
+            extractionName == PortablePayload.ExtractionMutexName(sid, hash),
+            "The same user and payload must share the same lock.");
+        Assert(cacheName != PortablePayload.CacheMutexName(otherSid) &&
+            extractionName != PortablePayload.ExtractionMutexName(otherSid, hash),
+            "Different users must have independent locks.");
+
+        WithHeldLockInChild(cacheName, () =>
+        {
+            using var otherUser = new Mutex(false, PortablePayload.CacheMutexName(otherSid));
+            Assert(otherUser.WaitOne(0), "Another user's cache lock must remain independent.");
+            otherUser.ReleaseMutex();
+        });
+        WithHeldLockInChild(extractionName, () => { });
+    }
+
+    private static void WithHeldLockInChild(string name, Action whileHeld)
+    {
+        var start = new ProcessStartInfo(Environment.ProcessPath!)
+        {
+            UseShellExecute = false,
+            RedirectStandardInput = true,
+            RedirectStandardOutput = true
+        };
+        start.ArgumentList.Add("--hold-lock");
+        start.ArgumentList.Add(name);
+        using Process child = Process.Start(start)
+            ?? throw new InvalidOperationException("Could not start lock holder.");
+        try
+        {
+            Task<string?> ready = child.StandardOutput.ReadLineAsync();
+            Assert(ready.Wait(TimeSpan.FromSeconds(15)) && ready.Result == "locked",
+                "The child process must acquire the named lock.");
+            using var contender = new Mutex(false, name);
+            Assert(!contender.WaitOne(0), "A second process must not acquire the held lock.");
+            whileHeld();
+            child.StandardInput.WriteLine();
+            Assert(child.WaitForExit(15_000) && child.ExitCode == 0,
+                "The child process must release the named lock.");
+            Assert(contender.WaitOne(0), "The lock must be available after child exit.");
+            contender.ReleaseMutex();
+        }
+        finally
+        {
+            if (!child.HasExited)
+            {
+                child.StandardInput.WriteLine();
+                if (!child.WaitForExit(5_000)) child.Kill();
+            }
         }
     }
 
@@ -79,6 +154,17 @@ internal static class LauncherTests
             File.Exists(Path.Combine(outside, "keep")),
             "Unverified directories and user data must be untouched.");
 
+        Task crossProcessCleanup = Task.CompletedTask;
+        WithHeldLockInChild(PortablePayload.CacheMutexName(PortablePayload.CurrentUserSid()), () =>
+        {
+            crossProcessCleanup = Task.Run(() => PortablePayload.Cleanup(cache, current,
+                [Path.Combine(runningDesktop, "OfficeMusicDesktop.exe"),
+                 Path.Combine(runningBackend, "Backend", "OfficeMusicEngine.exe")]));
+            Assert(!crossProcessCleanup.Wait(200),
+                "Cleanup must wait for the cache lock held by another process.");
+        });
+        crossProcessCleanup.GetAwaiter().GetResult();
+
         Task cleanup;
         using (PortablePayload.LockCache(cache))
         {
@@ -106,6 +192,19 @@ internal static class LauncherTests
         string log = Path.Combine(root, "launcher.log");
         Assert(File.Exists(log) && File.ReadAllText(log).Contains("Could not remove obsolete payload"),
             "Deletion failures must be written to launcher.log.");
+
+        string extractionBlocked = Extract(CreatePayload("extraction blocked"), cache);
+        Directory.SetLastWriteTimeUtc(extractionBlocked, DateTime.UtcNow.AddDays(-7));
+        WithHeldLockInChild(PortablePayload.ExtractionMutexName(
+            PortablePayload.CurrentUserSid(), Path.GetFileName(extractionBlocked)), () =>
+        {
+            PortablePayload.Cleanup(cache, current, []);
+            Assert(Directory.Exists(extractionBlocked),
+                "Cleanup must not delete a payload locked by extraction in another process.");
+        });
+        PortablePayload.Cleanup(cache, current, []);
+        Assert(!Directory.Exists(extractionBlocked),
+            "Cleanup must reclaim the payload once its extraction lock is released.");
     }
 
     private static byte[] CreatePayload(string content = "fixture", bool omitRequired = false,
