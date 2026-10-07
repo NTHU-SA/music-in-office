@@ -99,16 +99,44 @@
     async function resume() {
         state.paused = false;
         save();
-        const media = await wait(video, "Music player unavailable. Check login/consent.");
+        const deadline = Date.now() + 12000;
+        const readyMedia = () => {
+            if (state.paused) throw new Error("Playback was paused or disconnected.");
+            const media = video();
+            return media && media.readyState >= 2 &&
+                (isAd() || state.allowNext || !state.allowedId ||
+                    data().video_id === state.allowedId) ? media : null;
+        };
         try {
-            await media.play();
+            for (let attempt = 0; attempt < 3; attempt++) {
+                const media = await wait(readyMedia,
+                    "Music player unavailable or still loading. Check login/consent and use /resume.",
+                    deadline - Date.now());
+                try {
+                    await media.play();
+                } catch (error) {
+                    if (error.name !== "AbortError" || attempt === 2) throw error;
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                    continue;
+                }
+                await wait(() => {
+                    const current = readyMedia();
+                    return current && current === media && !current.paused;
+                }, "YouTube Music did not start. Check the music tab and use /resume.",
+                deadline - Date.now());
+                return;
+            }
         } catch (error) {
             state.paused = true;
             save();
-            throw new Error("Playback blocked. Click Play once in the managed YouTube Music tab, " +
-                "allow site sound/autoplay, then use /resume. " + error.message);
+            video()?.pause();
+            if (error.name === "NotAllowedError") {
+                throw new Error("Playback blocked. Click Play once in the managed YouTube Music tab, " +
+                    "allow site sound/autoplay, then use /resume. " + error.message);
+            }
+            throw new Error("Playback failed. Check the managed YouTube Music tab, then use /resume. " +
+                error.message);
         }
-        await wait(() => !media.paused, "YouTube Music did not start. Check the music tab.");
     }
     async function run(command, args) {
         lastHeartbeat = Date.now();
@@ -147,9 +175,10 @@
                 state.paused = args.paused;
                 state.ended = false;
                 save();
-                await wait(video, "Music player unavailable. Check login/consent.");
-                if (args.paused) video().pause();
-                else await resume();
+                if (args.paused) {
+                    const media = await wait(video, "Music player unavailable. Check login/consent.");
+                    media.pause();
+                } else await resume();
                 return {};
             case "resume": await resume(); return {};
             case "clearEnded": state.ended = false; return {};
