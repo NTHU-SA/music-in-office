@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO.Compression;
 using System.Reflection;
@@ -20,41 +21,50 @@ internal static class Program
             string cacheRoot = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "OfficeMusicBot", "App");
-            string directory = PortablePayload.Extract(payload, cacheRoot);
-            var start = new ProcessStartInfo(Path.Combine(directory,
-                check ? @"Backend\OfficeMusicEngine.exe" : "OfficeMusicDesktop.exe"))
+            string directory;
+            Process process;
+            using (PortablePayload.LockCache(cacheRoot))
             {
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                WorkingDirectory = directory
-            };
-            if (check)
-            {
-                start.ArgumentList.Add("--version");
-                start.RedirectStandardOutput = true;
-                start.RedirectStandardError = true;
+                directory = PortablePayload.Extract(payload, cacheRoot);
+                var start = new ProcessStartInfo(Path.Combine(directory,
+                    check ? @"Backend\OfficeMusicEngine.exe" : "OfficeMusicDesktop.exe"))
+                {
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    WorkingDirectory = directory
+                };
+                if (check)
+                {
+                    start.ArgumentList.Add("--version");
+                    start.RedirectStandardOutput = true;
+                    start.RedirectStandardError = true;
+                }
+                else
+                {
+                    foreach (string arg in args) start.ArgumentList.Add(arg);
+                }
+                process = Process.Start(start)
+                    ?? throw new IOException("無法啟動程式。");
+                PortablePayload.Cleanup(cacheRoot, directory);
             }
-            else
+            using (process)
             {
-                foreach (string arg in args) start.ArgumentList.Add(arg);
-            }
-            using Process process = Process.Start(start)
-                ?? throw new IOException("無法啟動程式。");
-            if (!check) return 0;
+                if (!check) return 0;
 
-            Task<string> output = process.StandardOutput.ReadToEndAsync();
-            Task<string> error = process.StandardError.ReadToEndAsync();
-            if (!process.WaitForExit(60_000))
-            {
-                process.Kill(entireProcessTree: true);
-                throw new TimeoutException("內含的播放引擎啟動檢查逾時。");
+                Task<string> output = process.StandardOutput.ReadToEndAsync();
+                Task<string> error = process.StandardError.ReadToEndAsync();
+                if (!process.WaitForExit(60_000))
+                {
+                    process.Kill(entireProcessTree: true);
+                    throw new TimeoutException("內含的播放引擎啟動檢查逾時。");
+                }
+                Task.WaitAll(output, error);
+                if (process.ExitCode != 0)
+                    throw new IOException($"內含的播放引擎啟動檢查失敗：{error.Result}");
+                Console.WriteLine(output.Result.Trim());
+                Console.WriteLine($"Verified application: {directory}");
+                return 0;
             }
-            Task.WaitAll(output, error);
-            if (process.ExitCode != 0)
-                throw new IOException($"內含的播放引擎啟動檢查失敗：{error.Result}");
-            Console.WriteLine(output.Result.Trim());
-            Console.WriteLine($"Verified application: {directory}");
-            return 0;
         }
         catch (Exception exception)
         {
@@ -74,6 +84,7 @@ internal static class Program
 
 internal static class PortablePayload
 {
+    private const string CacheMutexName = @"Local\OfficeMusicBot.Cache";
     internal static readonly string[] RequiredFiles =
     [
         "OfficeMusicDesktop.exe", "OfficeMusicDesktop.pri", "App.xbf",
@@ -97,7 +108,7 @@ internal static class PortablePayload
             catch (AbandonedMutexException)
             {
                 acquired = true;
-                Trace.TraceWarning("A previous application extraction was interrupted.");
+                LogWarning(cacheRoot, "A previous application extraction was interrupted.");
             }
             if (!acquired) throw new TimeoutException("另一個程式仍在展開元件，請稍後重試。");
 
@@ -130,6 +141,159 @@ internal static class PortablePayload
         finally
         {
             if (acquired) mutex.ReleaseMutex();
+        }
+    }
+
+    internal static IDisposable LockCache(string cacheRoot)
+    {
+        var mutex = new Mutex(false, CacheMutexName);
+        try
+        {
+            bool acquired;
+            try { acquired = mutex.WaitOne(TimeSpan.FromMinutes(2)); }
+            catch (AbandonedMutexException)
+            {
+                acquired = true;
+                LogWarning(cacheRoot, "A previous cache operation was interrupted.");
+            }
+            if (!acquired) throw new TimeoutException("另一個程式仍在處理元件，請稍後重試。");
+            return new CacheLock(mutex);
+        }
+        catch
+        {
+            mutex.Dispose();
+            throw;
+        }
+    }
+
+    internal static void Cleanup(string cacheRoot, string currentDirectory,
+        IReadOnlyCollection<string>? runningExecutables = null)
+    {
+        try
+        {
+            using var cacheLock = LockCache(cacheRoot);
+            if (!Directory.Exists(cacheRoot)) return;
+            if ((File.GetAttributes(cacheRoot) & FileAttributes.ReparsePoint) != 0)
+            {
+                LogWarning(cacheRoot, $"Skipping reparse-point payload cache: {cacheRoot}");
+                return;
+            }
+
+            string[] directories = Directory.GetDirectories(cacheRoot)
+                .Where(path => IsHash(Path.GetFileName(path)) &&
+                    Path.GetFullPath(path).StartsWith(
+                        Path.GetFullPath(cacheRoot) + Path.DirectorySeparatorChar,
+                        StringComparison.OrdinalIgnoreCase) &&
+                    RequiredFiles.All(file => File.Exists(Path.Combine(path, file))) &&
+                    !HasReparsePoint(path))
+                .ToArray();
+            string? recent = directories
+                .Where(path => !path.Equals(currentDirectory, StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(Directory.GetLastWriteTimeUtc)
+                .FirstOrDefault();
+            var running = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (runningExecutables is not null)
+            {
+                foreach (string executable in runningExecutables)
+                    running.Add(Path.GetFullPath(executable));
+            }
+            else
+            {
+                foreach (string name in new[] { "OfficeMusicDesktop", "OfficeMusicEngine" })
+                {
+                    foreach (Process process in Process.GetProcessesByName(name))
+                    {
+                        using (process)
+                        {
+                            try
+                            {
+                                string? executable = process.MainModule?.FileName;
+                                if (executable is null)
+                                    throw new IOException($"Cannot determine executable for {name} (PID {process.Id}).");
+                                running.Add(Path.GetFullPath(executable));
+                            }
+                            catch (InvalidOperationException exception)
+                            {
+                                if (!process.HasExited)
+                                    throw new IOException(
+                                        $"Cannot inspect {name} (PID {process.Id}).", exception);
+                                LogWarning(cacheRoot, $"{name} exited during cache inspection.");
+                            }
+                        }
+                    }
+                }
+            }
+            foreach (string path in directories)
+            {
+                if (path.Equals(currentDirectory, StringComparison.OrdinalIgnoreCase) ||
+                    path.Equals(recent, StringComparison.OrdinalIgnoreCase) ||
+                    Directory.GetLastWriteTimeUtc(path) > DateTime.UtcNow.AddHours(-24) ||
+                    running.Any(exe => exe.StartsWith(path + Path.DirectorySeparatorChar,
+                        StringComparison.OrdinalIgnoreCase)))
+                    continue;
+                try
+                {
+                    using var extraction = new Mutex(false,
+                        $@"Local\OfficeMusicBot.Extract.{Path.GetFileName(path)}");
+                    bool acquired;
+                    try { acquired = extraction.WaitOne(0); }
+                    catch (AbandonedMutexException) { acquired = true; }
+                    if (!acquired) continue;
+                    try { Directory.Delete(path, recursive: true); }
+                    finally { extraction.ReleaseMutex(); }
+                }
+                catch (Exception exception) when (exception is IOException or
+                    UnauthorizedAccessException)
+                {
+                    LogWarning(cacheRoot, $"Could not remove obsolete payload {path}: {exception}");
+                }
+            }
+        }
+        catch (Exception exception) when (exception is IOException or
+            UnauthorizedAccessException or Win32Exception or TimeoutException)
+        {
+            LogWarning(cacheRoot, $"Could not inspect obsolete payloads: {exception}");
+        }
+    }
+
+    internal static void LogWarning(string cacheRoot, string message)
+    {
+        try
+        {
+            string directory = Path.GetDirectoryName(cacheRoot)
+                ?? throw new IOException("Payload cache has no parent directory.");
+            Directory.CreateDirectory(directory);
+            File.AppendAllText(Path.Combine(directory, "launcher.log"),
+                $"{DateTimeOffset.Now:O} WARNING {message}{Environment.NewLine}");
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            Trace.TraceWarning($"Launcher warning could not be saved: {message} ({exception})");
+        }
+    }
+
+    private static bool IsHash(string name) =>
+        name.Length == 64 && name.All(c => c is >= '0' and <= '9' or >= 'a' and <= 'f');
+
+    private static bool HasReparsePoint(string path)
+    {
+        if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0) return true;
+        foreach (string entry in Directory.EnumerateFileSystemEntries(path))
+        {
+            FileAttributes attributes = File.GetAttributes(entry);
+            if ((attributes & FileAttributes.ReparsePoint) != 0 ||
+                ((attributes & FileAttributes.Directory) != 0 && HasReparsePoint(entry)))
+                return true;
+        }
+        return false;
+    }
+
+    private sealed class CacheLock(Mutex mutex) : IDisposable
+    {
+        public void Dispose()
+        {
+            mutex.ReleaseMutex();
+            mutex.Dispose();
         }
     }
 
