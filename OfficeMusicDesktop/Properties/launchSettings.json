@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "OfficeMusicDesktop (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "OfficeMusicDesktop (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}
