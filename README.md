@@ -23,11 +23,17 @@ Token 只在辦公室電腦設定，不要貼到 Discord、GitHub 或對話中�
 ## 執行 exe
 
 從 [GitHub Releases](https://github.com/NTHU-SA/music-in-office/releases) 下載
-`OfficeMusicBot-win-x64.zip`，解壓後執行 `OfficeMusicDesktop\OfficeMusicDesktop.exe`。
-也可以完成下方建置後，執行 `dist\OfficeMusicDesktop\OfficeMusicDesktop.exe`。
-搬到辦公室電腦時，複製完整資料夾，或解壓 `dist\OfficeMusicBot-win-x64.zip`；
-**不能只複製一個 exe**。可攜版包含 .NET、Windows App SDK 與播放引擎，
+`OfficeMusicBot.exe`，直接雙擊執行。
+也可以完成下方建置後，執行 `dist\OfficeMusicBot.exe`。
+搬到辦公室電腦時，**只需複製這一個 exe**，不需手動解壓或安裝。
+單檔版包含 .NET、Windows App SDK 與播放引擎，
 目標電腦不需要另外安裝 Python 或 .NET，但需要已安裝 Edge。
+
+WinUI 仍需要實體資源檔，因此這是**單檔自解壓啟動器**，不是完全不落地的程式：
+首次執行會自動將內含元件展開至 `%LOCALAPPDATA%\OfficeMusicBot\App\<內容雜湊>`，
+後續執行驗證並重用同一份元件；新版使用獨立目錄，不會覆蓋執行中的舊版。
+首次啟動需要較多時間與磁碟空間。.NET／Python runtime 也會使用使用者的暫存目錄。
+不需要管理員權限；設定、log 與登入 profile 仍沿用原本位置，升級不會清除。
 
 雙擊會開啟原生視窗，不會出現額外的主控台。填入 Bot Token（遮蔽顯示）、
 Server ID、Channel ID。若要使用已訂閱的 YouTube Premium／Music Premium，
@@ -39,7 +45,7 @@ Server ID、Channel ID。若要使用已訂閱的 YouTube Premium／Music Premiu
 所有點歌與控制指令都在設定的 Discord 頻道使用。
 
 ```powershell
-.\dist\OfficeMusicDesktop\OfficeMusicDesktop.exe
+.\dist\OfficeMusicBot.exe
 ```
 
 視窗會顯示 Discord 是否已成功連線、目前歌名／歌手、點歌者或自動推薦、
@@ -152,7 +158,7 @@ uv venv .venv
 uv pip install --python .venv\Scripts\python.exe -e ".[dev]"
 ```
 
-執行測試、lint、播放引擎與原生 WinUI 可攜版建置：
+執行測試、lint、播放引擎、原生 WinUI 與單檔啟動器建置：
 
 ```powershell
 .\scripts\build.ps1
@@ -171,31 +177,35 @@ dotnet publish .\OfficeMusicDesktop\OfficeMusicDesktop.csproj -c Release -r win-
 DOM fixture 測試會以無介面的 Edge 檢查實際 JavaScript 與播放器選擇器，不需要網路或登入。
 PyInstaller 會包含 Python、套件及 Playwright driver，不包含 Edge、token 或 profile。
 播放引擎執行時會解壓 Python runtime，因此不是零磁碟存取，也不是零設定檔。
+上述個別 publish 只產生開發用資料夾；請用 `scripts\build.ps1` 產生單檔發行版。
+建置會測試展開、快取重用、升級、併發、損壞與路徑檢查，並以最終單一 exe 的
+`--check` 驗證所有內含檔案及播放引擎啟動，不會連 Discord 或播放音訊。
 原生介面透過私有 stdin/stdout 管線控制引擎；token 不放在命令列引數，
 亦不進入正常 log。視窗與引擎分離，連線或引擎失敗後可保留視窗並重試。
-exe 需在 Windows 建置；發行資料夾與 ZIP 放在 `dist`，不提交到 Git。
+exe 需在 Windows 建置；單檔 exe、內部元件 ZIP 與開發用資料夾放在 `dist`，不提交到 Git。
 
 ## 自動發布版本
 
 GitHub Actions 的 `Release` workflow 在推送 `vMAJOR.MINOR.PATCH` tag 時自動執行，
-例如 `v0.1.0`。Windows runner 會執行測試與 lint、以 PyInstaller 建置播放引擎，
-再編譯 self-contained WinUI x64 可攜版並打包。所有步驟成功後才建立
-GitHub Release，附上 `OfficeMusicBot-win-x64.zip`、SHA-256 checksum 與自動產生的更新說明。
+例如 `v0.1.1`。Windows runner 會執行測試與 lint、以 PyInstaller 建置播放引擎，
+再編譯 self-contained WinUI x64 可攜版並嵌入單檔啟動器。所有步驟成功後才建立
+GitHub Release，附上 `OfficeMusicBot.exe`、SHA-256 checksum 與自動產生的更新說明。
 不需要額外設定發布 token，workflow 使用 GitHub 提供的 `GITHUB_TOKEN`。
 
 發布前，將 `pyproject.toml`、`src\office_music_bot\__init__.py`、
-`OfficeMusicDesktop\OfficeMusicDesktop.csproj` 的版本同步更新，
+`OfficeMusicDesktop\OfficeMusicDesktop.csproj`、`OfficeMusicLauncher\OfficeMusicLauncher.csproj`
+的版本同步更新，
 並將 `OfficeMusicDesktop\Package.appxmanifest` 設為對應的四段版本
-（例如 `0.1.0.0`）。版本與 tag 不一致時，workflow 會中止而不發布。
+（例如 `0.1.1.0`）。版本與 tag 不一致時，workflow 會中止而不發布。
 確認包含 workflow 與版本更新的 commit 已合併至預計發布的分支，再執行：
 
 ```powershell
-git tag -a v0.1.0 -m "Release v0.1.0"
-git push origin v0.1.0
+git tag -a v0.1.1 -m "Release v0.1.1"
+git push origin v0.1.1
 ```
 
 在 repository 的 Actions 頁面確認 `Release` workflow 成功後，即可從 Releases 下載。
-ZIP 未經程式碼簽署；解壓後需要保留完整資料夾，目標電腦仍須安裝 Edge。
+EXE 未經程式碼簽署；目標電腦仍須安裝 Edge。
 
 ## 驗收與限制
 
@@ -233,7 +243,10 @@ YouTube Music 沒有此用途的官方播放控制 API，本程式控制普通�
   必要時停止 bot，在登入視窗處理提示並測試網頁 Play，關閉後再啟動。
 - **推薦未開始**：確認 `/autoplay` 已開啟及網頁提供下一首推薦；可先重新點一首歌。
 - **瀏覽器工作階段中斷**：在視窗停止後重新啟動；不會自動開啟可見登入視窗或重新登入。
-- **播放引擎中斷／缺少檔案**：保持完整解壓資料夾，查看
+- **單檔版無法展開／元件損壞**：關閉程式，確認磁碟空間並重新下載 exe；
+  可刪除 `%LOCALAPPDATA%\OfficeMusicBot\App` 後重新執行，以重建元件快取。
+  不要刪除整個 `%LOCALAPPDATA%\OfficeMusicBot`，以免清除設定與登入狀態。
+- **播放引擎中斷／缺少檔案**：重新下載並執行單檔 exe；開發版需保留完整資料夾。查看
   `%LOCALAPPDATA%\OfficeMusicBot\desktop.log` 與 `bot.log`；視窗會保留輸入並允許重試。
 - **公告失敗**：確認頻道權限與連線，查看 `%LOCALAPPDATA%\OfficeMusicBot\bot.log`；
   不要上傳整個 profile 或設定目錄。

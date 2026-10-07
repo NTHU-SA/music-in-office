@@ -88,7 +88,7 @@ public sealed class BackendClient : IAsyncDisposable
             _process?.Dispose();
             string path = Path.Combine(AppContext.BaseDirectory, "Backend", "OfficeMusicEngine.exe");
             if (!File.Exists(path))
-                throw new BackendException("找不到播放引擎。請解壓完整的程式資料夾，不要只複製 GUI 執行檔。");
+                throw new BackendException("找不到播放引擎。請重新下載並執行 OfficeMusicBot.exe；若使用開發版，請保留完整的程式資料夾。");
             var info = new ProcessStartInfo(path)
             {
                 UseShellExecute = false,
