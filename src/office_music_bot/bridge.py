@@ -47,6 +47,9 @@ def handle_request(request: dict, directory: Path, runner: BotRunner) -> dict:
             response["message"] = "設定已儲存，下次開啟會自動帶入。"
         elif command in {"stop", "quit"}:
             runner.stop()
+        elif command == "login":
+            runner.start_login(directory)
+            response["message"] = "正在開啟 YouTube Music 登入視窗。"
         else:
             raise ValueError("Unknown command")
     except Exception as exc:

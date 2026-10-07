@@ -7,8 +7,8 @@
 ## 使用前準備
 
 - Windows 10/11、Microsoft Edge，以及可連線至 Discord / YouTube Music 的網路。
-- 電腦的預設音訊輸出設定為辦公室喇叭；exe 與專用 Edge 視窗都要保持開啟。
-- YouTube Music 的登入、廣告、地區或訂閱限制仍然適用，必要時在專用 Edge 視窗手動處理。
+- 電腦的預設音訊輸出設定為辦公室喇叭；exe 要保持開啟，平常使用無視窗（headless）Edge 播放。
+- YouTube Music 的登入、廣告、地區或訂閱限制仍然適用，必要時停止 bot，再開啟專用登入視窗手動處理。
 - 一個 Discord bot、一個伺服器及一個固定的**一般文字頻道**。
 
 在 [Discord Developer Portal](https://discord.com/developers/applications) 建立 application，
@@ -28,9 +28,12 @@ Token 只在辦公室電腦設定，不要貼到 Discord、GitHub 或對話中�
 目標電腦不需要另外安裝 Python 或 .NET，但需要已安裝 Edge。
 
 雙擊會開啟原生視窗，不會出現額外的主控台。填入 Bot Token（遮蔽顯示）、
-Server ID、Channel ID，再按「儲存並啟動」。連線成功後會開啟專用 Edge。
-請保持兩個分頁開啟：播放分頁和搜尋分頁。
-登入及同意提示需要你在瀏覽器處理；不要直接在這些分頁選歌，以免和 bot 的佇列衝突。
+Server ID、Channel ID。若要使用已訂閱的 YouTube Premium／Music Premium，
+先按「YouTube 登入」，自行在專用 Edge 登入 Google、處理同意提示並確認訂閱可用；
+程式不會代填、儲存或索取 Google 密碼。
+完成後按「完成登入並關閉」，再按「儲存並啟動」。
+播放使用同一個專用 profile，但以 headless 模式執行，不會留下可操作帳號的瀏覽器視窗。
+播放與登入不能同時執行；登入視窗不會自動開啟，登入期間請勿讓他人使用電腦。
 所有點歌與控制指令都在設定的 Discord 頻道使用。
 
 ```powershell
@@ -45,8 +48,9 @@ Server ID、Channel ID，再按「儲存並啟動」。連線成功後會開啟�
 尚未填完的 ID 也能先保留，啟動前才檢查格式。啟動前會先儲存，因此 token 被拒絕、
 ID 填錯或網路出問題，都不會讓已輸入的內容消失。
 錯誤顯示在同一個視窗內，不會自動關閉；修改後按「儲存並重試」即可。
-播放期間的錯誤也會顯示在視窗，可處理 Edge 提示後在 Discord 使用 `/resume`，
-或按「停止」後重新啟動。設定在運行期間鎖定，先停止 bot 再修改。
+播放期間的錯誤也會顯示在視窗，可在 Discord 使用 `/resume` 重試。
+若需要登入或處理網頁提示，按「停止」→「YouTube 登入」，處理後關閉登入視窗再啟動。
+停止／重新啟動會清空佇列。設定在運行期間鎖定，先停止 bot 再修改。
 
 亦可透過本機環境變數 `OFFICE_MUSIC_TOKEN`、`OFFICE_MUSIC_GUILD_ID`、
 `OFFICE_MUSIC_CHANNEL_ID` 預填 GUI；在視窗修改後，以表單內容啟動。
@@ -56,6 +60,14 @@ ID 填錯或網路出問題，都不會讓已輸入的內容消失。
 儲存的 token 由 Windows DPAPI 保護，僅原 Windows 使用者可解密；
 這不代表同一使用者下的惡意程式無法存取它。瀏覽器登入狀態同樣是敏感資料，
 不要分享 profile、設定或整個資料目錄。程式不會使用或修改你的個人 Edge profile。
+
+**Headless 不是帳號安全邊界**：使用同一個 Windows 帳號的人仍可能重新開啟專用 profile
+或存取登入資料，也能操作本程式的登入按鈕；本程式沒有管理員密碼／權限分級。
+如果辦公室其他人也能操作這台電腦，請以獨立的 Windows 使用者執行 bot，
+不要讓他人登入該使用者；需要時鎖定桌面，再從 Discord 點歌。
+僅隱藏／最小化瀏覽器或換成 headless 不能取代 Windows 帳號與存取權限隔離。
+登入 cookie 會保留，但 Google 可能讓工作階段失效、要求驗證或再次登入，
+因此不能保證永久只登入一次；程式也不會驗證或替你取得 Premium。
 
 按「停止」會中斷連線並關閉專用瀏覽器，但保留設定視窗；關閉視窗也會停止 bot。
 相同 Windows 使用者不能同時執行兩個 bot 工作階段。
@@ -69,7 +81,7 @@ ID 填錯或網路出問題，都不會讓已輸入的內容消失。
 | `/queue page:1` | 檢視待播點歌，每頁最多 10 首 |
 | `/nowplaying` | 查詢目前歌曲、是否暫停、自動推薦及錯誤狀態 |
 | `/pause` | 暫停；新點歌不會解除暫停 |
-| `/resume` | 繼續播放；手動處理瀏覽器提示後可用來重試 |
+| `/resume` | 繼續播放或重試；需處理登入提示時，先由管理者停止並開啟登入視窗 |
 | `/skip` | 跳到下一首點歌，沒有點歌時依自動推薦開關決定推薦或停止 |
 | `/autoplay enabled:True` | 開啟 YouTube Music 自動推薦，預設開啟 |
 | `/autoplay enabled:False` | 目前歌曲播完後，若沒有點歌就停止 |
@@ -120,11 +132,15 @@ winapp run .\OfficeMusicDesktop --arch x64
 .\.venv\Scripts\python.exe -m office_music_bot
 .\.venv\Scripts\python.exe -m office_music_bot --setup
 .\.venv\Scripts\python.exe -m office_music_bot --check
+.\.venv\Scripts\python.exe -m office_music_bot --login
 .\.venv\Scripts\python.exe -m office_music_bot --probe-browser
 ```
 
 `--check` 只驗證本機設定，不驗證 Discord token；
 `--probe-browser` 只檢查真實 Edge 搜尋，不連 Discord 或播放音訊。
+`--login` 不需要 Discord 設定，只開啟專用可見 Edge；自行登入後關閉所有登入視窗即可結束。
+正常播放與搜尋 probe 都使用 headless Edge；保留音訊輸出並允許播放器啟動，
+不會開啟遠端除錯 TCP 連接埠。請不要自行加上遠端除錯連接埠或分享 profile。
 GUI exe 沒有終端輸出，命令列診斷請用上面的 Python 方式。
 
 若已安裝 uv：
@@ -173,7 +189,8 @@ exe 需在 Windows 建置；發行資料夾與 ZIP 放在 `dist`，不提交到 
 3. 播推薦時點歌，確認切換並標示正確的點歌者。
 4. 暫停後點歌不會出聲；關閉自動推薦後佇列播完停止。
 5. 重複點同一首仍各自公告，暫停／繼續不會重複公告。
-6. 關閉播放分頁後，bot 顯示錯誤而非假裝已播放。
+6. 登入後關閉登入視窗，啟動 bot，確認沒有可見 Edge 視窗但仍能從喇叭播放。
+   停止後再次啟動，確認登入狀態仍有效；工作階段失效時能停止並重新登入。
 
 YouTube Music 沒有此用途的官方播放控制 API，本程式控制普通網頁播放器，
 網站更新可能導致搜尋或控制失效。歌曲／推薦可能受登入、地區、訂閱、網路、
@@ -187,11 +204,11 @@ YouTube Music 沒有此用途的官方播放控制 API，本程式控制普通�
 - **沒有 slash commands**：確認 bot 以 `applications.commands` 邀請，server ID 正確，
   已成功連線，以及成員能在頻道使用 application commands。
 - **Discord 拒絕 token**：在設定視窗更正後重試；不要將 token 分享出去。
-- **找不到歌曲**：嘗試更精確的歌名／歌手或單曲連結，查看搜尋分頁是否卡在登入／同意畫面。
-- **無法播放／沒有聲音**：查看播放分頁提示、喇叭輸出、Windows 音量混音程式與 Edge 分頁音量，
-  必要時手動按一次網頁 Play，再使用 `/resume`。
+- **找不到歌曲**：嘗試更精確的歌名／歌手或單曲連結；若懷疑登入／同意提示，停止 bot 後按「YouTube 登入」檢查。
+- **無法播放／沒有聲音**：檢查喇叭輸出與 Windows 音量混音程式的 Edge 音量，並用 `/resume` 重試；
+  必要時停止 bot，在登入視窗處理提示並測試網頁 Play，關閉後再啟動。
 - **推薦未開始**：確認 `/autoplay` 已開啟及網頁提供下一首推薦；可先重新點一首歌。
-- **瀏覽器被關閉**：在視窗停止後重新啟動；不會自動重新登入或重建已關閉的工作階段。
+- **瀏覽器工作階段中斷**：在視窗停止後重新啟動；不會自動開啟可見登入視窗或重新登入。
 - **播放引擎中斷／缺少檔案**：保持完整解壓資料夾，查看
   `%LOCALAPPDATA%\OfficeMusicBot\desktop.log` 與 `bot.log`；視窗會保留輸入並允許重試。
 - **公告失敗**：確認頻道權限與連線，查看 `%LOCALAPPDATA%\OfficeMusicBot\bot.log`；

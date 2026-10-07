@@ -11,7 +11,7 @@ from pathlib import Path
 import discord
 
 from office_music_bot import __version__
-from office_music_bot.browser import PlaybackError, probe
+from office_music_bot.browser import MusicBrowser, PlaybackError, probe
 from office_music_bot.config import (
     Config,
     ConfigurationError,
@@ -45,6 +45,17 @@ async def run(config: Config) -> None:
             raise PlaybackError(bot.fatal_error)
 
 
+async def login(directory: Path) -> None:
+    browser = MusicBrowser(directory)
+    try:
+        await browser.start(interactive=True)
+        print("Sign in manually and confirm Premium. Close all login windows when finished.")
+        while browser.context and any(not page.is_closed() for page in browser.context.pages):
+            await asyncio.sleep(0.2)
+    finally:
+        await browser.close()
+
+
 def main() -> int:
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
@@ -63,6 +74,9 @@ def main() -> int:
         help="Check live Edge song search without Discord/audio",
     )
     parser.add_argument("--console", action="store_true", help="Use the legacy console mode")
+    parser.add_argument(
+        "--login", action="store_true", help="Open visible Edge for manual YouTube Music login"
+    )
     parser.add_argument("--bridge", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.bridge:
@@ -75,6 +89,9 @@ def main() -> int:
         directory = data_directory()
         configure_logging(directory)
         with InstanceLock(directory):
+            if args.login:
+                asyncio.run(login(directory))
+                return 0
             if args.probe_browser:
                 asyncio.run(probe(directory))
                 return 0
@@ -97,7 +114,7 @@ def main() -> int:
                     f"Configuration valid. Server: {config.guild_id}; channel: {config.channel_id}"
                 )
                 return 0
-            print("OfficeMusicBot running. Keep both Edge tabs open. Press Ctrl+C to stop.")
+            print("OfficeMusicBot running with headless Edge. Press Ctrl+C to stop.")
             asyncio.run(run(config))
             return 0
     except KeyboardInterrupt:

@@ -6,10 +6,11 @@ import queue
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 
 import discord
 
-from .browser import PlaybackError
+from .browser import MusicBrowser, PlaybackError
 from .config import Config, ConfigurationError, InstanceLock
 from .discord_bot import MusicBot
 
@@ -73,6 +74,18 @@ class BotRunner:
         )
         self.thread.start()
 
+    def start_login(self, directory: Path) -> None:
+        if self.busy:
+            raise ConfigurationError("Another OfficeMusicBot instance is already running.")
+        self._stop_requested.clear()
+        self.events.put(
+            RuntimeEvent("login_opening", "正在開啟專用 Edge；請自行登入 YouTube Music。")
+        )
+        self.thread = threading.Thread(
+            target=self._thread_main, args=(directory,), name="youtube-login", daemon=False
+        )
+        self.thread.start()
+
     def stop(self) -> None:
         self._stop_requested.set()
         loop, event = self._loop, self._stop_event
@@ -83,10 +96,15 @@ class BotRunner:
                 if self.busy:
                     log.warning("Runtime is already shutting down.")
 
-    def _thread_main(self, config: Config) -> None:
+    def _thread_main(self, config: Config | Path) -> None:
         try:
-            with InstanceLock(config.directory):
-                asyncio.run(self._session(config))
+            directory = config if isinstance(config, Path) else config.directory
+            with InstanceLock(directory):
+                asyncio.run(
+                    self._login_session(directory)
+                    if isinstance(config, Path)
+                    else self._session(config)
+                )
         except Exception as exc:
             log.error("Bot session failed: %s", type(exc).__name__)
             self.events.put(RuntimeEvent("error", error_message(exc)))
@@ -94,6 +112,46 @@ class BotRunner:
             self._loop = None
             self._stop_event = None
             self.events.put(RuntimeEvent("finished"))
+
+    async def _login_session(self, directory: Path) -> None:
+        self._loop = asyncio.get_running_loop()
+        self._stop_event = asyncio.Event()
+        if self._stop_requested.is_set():
+            return
+        browser = MusicBrowser(directory)
+        opening = asyncio.create_task(browser.start(interactive=True))
+        stopping = asyncio.create_task(self._stop_event.wait())
+        try:
+            done, _ = await asyncio.wait(
+                [opening, stopping], return_when=asyncio.FIRST_COMPLETED
+            )
+            if stopping in done:
+                return
+            await opening
+            self.events.put(
+                RuntimeEvent(
+                    "login_ready",
+                    "請自行登入並確認 Premium；完成後按「完成登入並關閉」。"
+                    "此時瀏覽器可操作，請勿讓他人使用。",
+                )
+            )
+            while browser.context and any(not page.is_closed() for page in browser.context.pages):
+                try:
+                    await asyncio.wait_for(self._stop_event.wait(), timeout=0.2)
+                    break
+                except TimeoutError:
+                    continue
+        finally:
+            opening.cancel()
+            stopping.cancel()
+            await asyncio.gather(opening, stopping, return_exceptions=True)
+            await browser.close()
+        self.events.put(
+            RuntimeEvent(
+                "login_closed",
+                "登入視窗已關閉；登入狀態如有建立會保留，播放不會開啟瀏覽器視窗。",
+            )
+        )
 
     async def _session(self, config: Config) -> None:
         self._loop = asyncio.get_running_loop()

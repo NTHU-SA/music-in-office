@@ -51,6 +51,11 @@ while (Console.ReadLine() is { } line)
     if (command == "stop") Send(new { kind = "finished" });
     Send(new { kind = "response", id, ok = true, message = "Fixture settings saved." });
     if (command == "quit") break;
+    if (command == "login")
+    {
+        Send(new { kind = "login_ready", message = "Fixture login window; no real Google login." });
+        continue;
+    }
     if (command != "start") continue;
     if (settings.guild_id == "888")
     {

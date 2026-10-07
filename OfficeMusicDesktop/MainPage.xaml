@@ -74,6 +74,18 @@
                 <Button Content="停止" Command="{x:Bind ViewModel.StopCommand}"
                         AutomationProperties.AutomationId="StopButton"/>
             </StackPanel>
+            <StackPanel Spacing="8">
+                <TextBlock Text="YouTube 帳號" Style="{ThemeResource BodyStrongTextBlockStyle}"/>
+                <StackPanel Orientation="Horizontal" Spacing="10">
+                    <Button Content="YouTube 登入" Command="{x:Bind ViewModel.LoginCommand}"
+                            AutomationProperties.AutomationId="YouTubeLoginButton"/>
+                    <Button Content="完成登入並關閉" Command="{x:Bind ViewModel.FinishLoginCommand}"
+                            AutomationProperties.AutomationId="FinishLoginButton"/>
+                </StackPanel>
+                <TextBlock Text="只在登入時開啟 Edge；平常無視窗播放。登入狀態會保留，但 Google 可能要求重新登入。"
+                           TextWrapping="Wrap" Style="{ThemeResource CaptionTextBlockStyle}"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+            </StackPanel>
             <InfoBar IsOpen="{x:Bind ViewModel.HasError, Mode=TwoWay}" Severity="Error"
                      Title="需要處理" Message="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
                      AutomationProperties.AutomationId="ErrorInfoBar"/>
@@ -110,7 +122,7 @@
                            AutomationProperties.AutomationId="SavedStatus"
                            Style="{ThemeResource CaptionTextBlockStyle}"
                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-                <TextBlock Text="專用 Edge 的兩個分頁請保持開啟。音樂從 Windows 預設音訊裝置播放。"
+                <TextBlock Text="音樂從 Windows 預設音訊裝置播放。無視窗不代表帳號隔離；請使用獨立 Windows 使用者保護登入資料。"
                            TextWrapping="Wrap" Style="{ThemeResource CaptionTextBlockStyle}"
                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
             </StackPanel>
