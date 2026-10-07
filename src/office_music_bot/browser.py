@@ -174,6 +174,9 @@ class MusicBrowser:
             raise PlaybackError(
                 "Extension operation timed out. Check YouTube Music and retry."
             ) from exc
+        except asyncio.CancelledError:
+            await socket.close(code=1011)
+            raise
         except (ConnectionError, RuntimeError) as exc:
             raise PlaybackError(
                 "Extension connection closed. Reconnect Chromium and retry."

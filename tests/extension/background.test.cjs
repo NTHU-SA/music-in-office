@@ -76,6 +76,14 @@ function fixture() {
     return {context, tabState, storage, commands, sockets};
 }
 
+async function until(predicate) {
+    for (let attempt = 0; attempt < 100; attempt++) {
+        if (predicate()) return;
+        await new Promise(resolve => setImmediate(resolve));
+    }
+    assert.fail("Timed out waiting for extension operation");
+}
+
 test("initial connection waits for new tab commit before injecting commands", async () => {
     const f = fixture();
     await f.context.dispatch("initialize", {interactive: false}, 0);
@@ -145,4 +153,67 @@ test("interactive initialization opens login mode, not a muted search tab", asyn
     await f.context.dispatch("initialize", {interactive: true}, 0);
     assert.equal(f.tabState.size, 1);
     assert.equal(f.commands.at(-1).args.role, "login");
+});
+
+test("unresolved search does not delay pause, and playback commands stay ordered", async () => {
+    const f = fixture();
+    await f.context.dispatch("initialize", {interactive: false}, 0);
+    const socket = f.sockets[0];
+    socket.open();
+    const executeScript = f.context.chrome.scripting.executeScript;
+    let finishSearch;
+    let finishPause;
+    f.context.chrome.scripting.executeScript = async options => {
+        const result = await executeScript(options);
+        if (options.args?.[0] === "resolve") {
+            return new Promise(resolve => { finishSearch = () => resolve(result); });
+        }
+        if (options.args?.[0] === "pause") {
+            return new Promise(resolve => { finishPause = () => resolve(result); });
+        }
+        return result;
+    };
+    const send = (id, command, args = {}) =>
+        socket.onmessage({data: JSON.stringify({id, command, args})});
+    send(1, "resolve", {value: "Song", isLink: false});
+    await until(() => !!finishSearch);
+    send(2, "pause");
+    await until(() => !!finishPause);
+    send(3, "resume");
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(f.commands.some(value => value.command === "resume"), false);
+    assert.equal(socket.sent.some(reply => reply.id === 1 || reply.id === 2), false);
+
+    finishPause();
+    await until(() => socket.sent.some(reply => reply.id === 3));
+    assert.deepEqual(socket.sent.map(reply => reply.id), [2, 3]);
+    assert.deepEqual(f.commands.slice(-3).map(value => value.command), ["resolve", "pause", "resume"]);
+    assert.equal(f.commands.find(value => value.command === "pause").tabId, f.storage.tabs.playback);
+    finishSearch();
+    await until(() => socket.sent.some(reply => reply.id === 1));
+    assert.deepEqual(socket.sent.map(reply => reply.id), [2, 3, 1]);
+});
+
+test("simultaneous initialization and search retain both managed tabs", async () => {
+    const f = fixture();
+    const socket = f.sockets[0];
+    socket.open();
+    socket.onmessage({data: JSON.stringify({id: 1, command: "initialize",
+        args: {interactive: false}})});
+    socket.onmessage({data: JSON.stringify({id: 2, command: "resolve",
+        args: {value: "Song", isLink: false}})});
+    await until(() => socket.sent.length === 2);
+    assert.equal(f.tabState.size, 2);
+    assert.notEqual(f.storage.tabs.playback, f.storage.tabs.search);
+    assert.deepEqual(socket.sent.map(reply => reply.ok), [true, true]);
+});
+
+test("invalid RPC messages close the socket instead of escaping the message handler", () => {
+    for (const message of ["not JSON", "null"]) {
+        const f = fixture();
+        const socket = f.sockets[0];
+        socket.open();
+        assert.doesNotThrow(() => socket.onmessage({data: message}));
+        assert.equal(socket.readyState, 3);
+    }
 });

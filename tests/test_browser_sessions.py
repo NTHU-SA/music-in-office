@@ -6,7 +6,7 @@ from pathlib import Path
 
 import aiohttp
 import pytest
-from aiohttp import web
+from aiohttp import WSMsgType, web
 
 from office_music_bot.browser import (
     EXTENSION_ID,
@@ -99,6 +99,40 @@ async def test_disconnect_fails_inflight_and_reconnect_does_not_replay(service):
         pause = asyncio.create_task(browser.pause())
         assert (await respond(reconnected))["command"] == "pause"
         await pause
+    assert not browser._pending
+
+
+@pytest.mark.parametrize("cancel_by", ["task", "caller_timeout"])
+async def test_canceled_operation_closes_socket_and_reconnects_cleanly(service, cancel_by):
+    browser, client, url = service
+    socket = await client.ws_connect(url, origin=ORIGIN)
+    pending = asyncio.create_task(browser.pause())
+    command = await asyncio.wait_for(socket.receive_json(), 2)
+    assert command["command"] == "pause"
+
+    if cancel_by == "task":
+        pending.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await pending
+    else:
+        with pytest.raises(TimeoutError):
+            async with asyncio.timeout(0.01):
+                await pending
+        assert pending.cancelled()
+
+    assert (await asyncio.wait_for(socket.receive(), 2)).type == WSMsgType.CLOSE
+    assert not browser._pending
+    async with asyncio.timeout(2):
+        while browser._connected.is_set():
+            await asyncio.sleep(0.01)
+    async with client.ws_connect(url, origin=ORIGIN) as reconnected:
+        resumed = asyncio.create_task(browser.resume())
+        next_command = await asyncio.wait_for(respond(reconnected), 2)
+        assert next_command["command"] == "resume"
+        assert next_command["id"] > command["id"]
+        await resumed
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(reconnected.receive(), 0.05)
     assert not browser._pending
 
 

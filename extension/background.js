@@ -3,8 +3,11 @@ let socket;
 let heartbeat;
 let connecting = false;
 let epoch = 0;
-let chain = Promise.resolve();
+let playbackChain = Promise.resolve();
+let searchChain = Promise.resolve();
+let tabStorageChain = Promise.resolve();
 let tabs = {};
+const managing = {};
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 function requireEpoch(activeEpoch) {
@@ -19,8 +22,19 @@ async function badge(text, title) {
 }
 
 async function managed(role) {
+    if (managing[role]) return managing[role];
+    const pending = findOrCreateManaged(role);
+    managing[role] = pending;
+    try {
+        return await pending;
+    } finally {
+        delete managing[role];
+    }
+}
+
+async function findOrCreateManaged(role) {
     const stored = await chrome.storage.session.get("tabs");
-    tabs = stored.tabs || {};
+    tabs = {...stored.tabs, ...tabs};
     const id = tabs[role];
     if (id) {
         try {
@@ -32,7 +46,9 @@ async function managed(role) {
     }
     const tab = await chrome.tabs.create({url: "https://music.youtube.com/", active: false});
     tabs[role] = tab.id;
-    await chrome.storage.session.set({tabs});
+    const save = tabStorageChain.then(() => chrome.storage.session.set({tabs: {...tabs}}));
+    tabStorageChain = save.catch(() => {});
+    await save;
     await loaded(tab.id, "https://music.youtube.com/");
     await run(tab.id, "initialize", {role});
     return tab.id;
@@ -91,6 +107,15 @@ async function loaded(tabId, url) {
 }
 
 async function dispatch(command, args, activeEpoch) {
+    if (command === "resolve") {
+        const search = await managed("search");
+        requireEpoch(activeEpoch);
+        await run(search, "initialize", {role: "search"}, activeEpoch);
+        const url = args.isLink ? args.value :
+            `https://music.youtube.com/search?q=${encodeURIComponent(args.value)}`;
+        await navigate(search, url, activeEpoch);
+        return run(search, "resolve", args, activeEpoch);
+    }
     const playback = await managed("playback");
     requireEpoch(activeEpoch);
     if (command === "initialize") {
@@ -102,14 +127,6 @@ async function dispatch(command, args, activeEpoch) {
             await managed("search");
         }
         return {};
-    }
-    if (command === "resolve") {
-        const search = await managed("search");
-        await run(search, "initialize", {role: "search"}, activeEpoch);
-        const url = args.isLink ? args.value :
-            `https://music.youtube.com/search?q=${encodeURIComponent(args.value)}`;
-        await navigate(search, url, activeEpoch);
-        return run(search, "resolve", args, activeEpoch);
     }
     if (command === "play") {
         await run(playback, "policy", {id: args.id, next: false, paused: args.paused}, activeEpoch);
@@ -127,7 +144,8 @@ async function connect() {
     current.onopen = () => {
         connecting = false;
         const activeEpoch = ++epoch;
-        chain = Promise.resolve();
+        playbackChain = Promise.resolve();
+        searchChain = Promise.resolve();
         badge("ON", "connected").catch(console.error);
         heartbeat = setInterval(() => {
             if (current.readyState !== WebSocket.OPEN) return;
@@ -137,9 +155,19 @@ async function connect() {
             }
         }, 2000);
         current.onmessage = event => {
-            chain = chain.then(async () => {
+            let request;
+            let search;
+            try {
+                request = JSON.parse(event.data);
+                search = request.command === "resolve";
+            } catch (error) {
+                console.error("Invalid local service message:", error.message);
+                current.close();
+                return;
+            }
+            const pending = search ? searchChain : playbackChain;
+            const next = pending.then(async () => {
                 if (activeEpoch !== epoch) return;
-                const request = JSON.parse(event.data);
                 try {
                     const data = await dispatch(request.command, request.args, activeEpoch);
                     if (activeEpoch === epoch && current.readyState === WebSocket.OPEN) {
@@ -157,6 +185,8 @@ async function connect() {
                 console.error("Invalid local service message:", error.message);
                 current.close();
             });
+            if (search) searchChain = next;
+            else playbackChain = next;
         };
     };
     current.onclose = () => {
