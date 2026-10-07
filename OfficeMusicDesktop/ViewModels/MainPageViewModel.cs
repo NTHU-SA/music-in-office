@@ -207,6 +207,7 @@ public partial class MainPageViewModel : ObservableObject
                     SongArtist = "在 Discord 使用 /play 開始播放。";
                     SongSource = "音樂會從這台電腦播放";
                     QueueText = "待播 0 首";
+                    AutoplayText = "自動推薦已開啟";
                 }
                 break;
             case "track" when packet.Data is { } data:

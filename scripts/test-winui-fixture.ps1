@@ -65,6 +65,7 @@ Assert-Value SongSource "YouTube Music 自動推薦"
 Assert-Value QueueCount "待播 0 首"
 Assert-Value AutoplayStatus "自動推薦已關閉"
 Stop-Scenario
+Assert-Value AutoplayStatus "自動推薦已開啟"
 
 Start-Scenario "456"
 Assert-Value ConnectionStatus "連線已中斷"
