@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Office Music Link",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Connect YouTube Music tabs to the local Office Music Bot.",
   "minimum_chrome_version": "120",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAsaIErR3zM03rhM3a7XXgFoUjq4mK5EwazSF6QfGk1dCJJKnsOyLl+EXYamm1tDb5Y+jIok521V1SqFUIK7plNnP/57payNo1vrvPtW4ORrRDq7sPchxfxyy8QwvTdbsaMcwpuqzs14gbFs0twg2Z5BR2I+AJru7VxQSS4gTPVD7ddngTXOy9sScysjFum88TV7uWBJqIC5Chg8V62rlCWozxaj61pi3PZOOu0asgOu6+8M11Y7zBHRNYNnLX/WuYcVQ7aUaMDok0KceRaCGDfyFbpA8lWYZnAQi4YfAlTlZblozdX+i8T4FLbIRSrQd4AP1EL12IDaGehh6XAEb6BQIDAQAB",
