@@ -102,7 +102,10 @@ STATE_SCRIPT = r"""
     const guard = window.__officeMusic;
     const error = document.querySelector('yt-playability-error-supported-renderers')
         ?.textContent?.trim();
-    return {id, title: title || data.title || '', artist, position: video?.currentTime || 0,
+    return {id, title: title || data.title || '', artist,
+        dataId: data.video_id || '', dataTitle: data.title || '',
+        dataArtist: data.author || '',
+        position: video?.currentTime || 0,
         paused: video?.paused ?? true, ended: video?.ended || !!guard?.ended,
         advertisement: ad, ready: (video?.readyState || 0) >= 2,
         generation: guard?.generation || 0, error: error || null};
@@ -118,6 +121,12 @@ GUARD_SCRIPT = r"""
     const isAd = () => document.querySelector('#movie_player')?.classList.contains('ad-showing');
     const identity = () => document.querySelector('#movie_player')?.getVideoData?.()?.video_id;
     const check = video => {
+        if (window.__officeMusicSearch) {
+            video.muted = true;
+            video.volume = 0;
+            if (!isAd()) video.pause();
+            return;
+        }
         if (isAd()) {
             if (state.paused || (state.ended && !state.allowNext && !state.finishAd)) video.pause();
             return;
@@ -135,11 +144,32 @@ GUARD_SCRIPT = r"""
     document.addEventListener('ended', event => {
         if (event.target instanceof HTMLVideoElement && !isAd()) state.ended = true;
     }, true);
-    for (const name of ['play', 'playing', 'loadedmetadata', 'timeupdate']) {
+    for (const name of ['play', 'playing', 'loadedmetadata', 'timeupdate', 'volumechange']) {
         document.addEventListener(name, event => {
             if (event.target instanceof HTMLVideoElement) check(event.target);
         }, true);
     }
+})();
+"""
+
+SEARCH_TAB_SCRIPT = r"""
+(() => {
+    window.__officeMusicSearch = true;
+    for (const [property, forced] of [['muted', true], ['volume', 0]]) {
+        const descriptor = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, property);
+        Object.defineProperty(HTMLMediaElement.prototype, property, {
+            configurable: true,
+            enumerable: descriptor.enumerable,
+            get() { return descriptor.get.call(this); },
+            set(_) { descriptor.set.call(this, forced); }
+        });
+    }
+    document.addEventListener('play', event => {
+        if (event.target instanceof HTMLMediaElement) {
+            event.target.muted = true;
+            event.target.volume = 0;
+        }
+    }, true);
 })();
 """
 
@@ -167,6 +197,7 @@ class MusicBrowser:
             )
             await self.page.goto("https://music.youtube.com", wait_until="domcontentloaded")
             self.search_page = await self.context.new_page()
+            await self.search_page.add_init_script(SEARCH_TAB_SCRIPT)
         except PlaywrightError as exc:
             await self.close()
             raise PlaybackError(
@@ -186,15 +217,39 @@ class MusicBrowser:
             raise PlaybackError("The search browser tab was closed. Restart the bot.")
         try:
             if is_link:
-                await page.goto(value, wait_until="domcontentloaded", timeout=30000)
-                await page.wait_for_function(
-                    "() => document.querySelector('#movie_player')?.getVideoData?.()?.title",
-                    timeout=15000,
-                )
+                await page.goto(value, wait_until="domcontentloaded", timeout=20000)
+                video_id = parse_qs(urlparse(value).query)["v"][0]
+                try:
+                    await page.wait_for_function(
+                        """id => {
+                            const player = document.querySelector('#movie_player');
+                            const data = player?.getVideoData?.();
+                            return !!document.querySelector(
+                                'yt-playability-error-supported-renderers'
+                            ) || (!player?.classList.contains('ad-showing') &&
+                                data?.video_id === id && !!data.title);
+                        }""",
+                        arg=video_id,
+                        timeout=40000,
+                    )
+                except PlaywrightError as exc:
+                    raise PlaybackError(
+                        "Requested song metadata is unavailable. Wait for any advertisement "
+                        "to finish, or check login, connectivity and the link."
+                    ) from exc
                 state = await page.evaluate(STATE_SCRIPT)
                 if state["error"]:
                     raise PlaybackError("This song is unavailable. Check the YouTube Music page.")
-                song = self._song(state)
+                if state["advertisement"] or state["dataId"] != video_id or not state["dataTitle"]:
+                    raise PlaybackError(
+                        "The requested song is not active yet. Wait for the advertisement "
+                        "to finish and try again."
+                    )
+                song = Song(
+                    video_id,
+                    state["dataTitle"],
+                    state["dataArtist"] or "Unknown artist",
+                )
             else:
                 await page.goto(
                     f"https://music.youtube.com/search?q={quote(value, safe='')}",

@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -7,9 +8,11 @@ from office_music_bot.browser import (
     GUARD_SCRIPT,
     NEXT_BUTTON,
     PLAY_BUTTON,
+    SEARCH_TAB_SCRIPT,
     SONG_TYPE_SCRIPT,
     STATE_SCRIPT,
     MusicBrowser,
+    Song,
 )
 
 
@@ -19,6 +22,20 @@ async def page():
         browser = await playwright.chromium.launch(channel="msedge", headless=True)
         try:
             yield await browser.new_page()
+        finally:
+            await browser.close()
+
+
+@pytest.fixture
+async def guarded_search_page():
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch(channel="msedge", headless=True)
+        context = await browser.new_context()
+        await context.add_init_script(GUARD_SCRIPT)
+        page = await context.new_page()
+        await page.add_init_script(SEARCH_TAB_SCRIPT)
+        try:
+            yield page
         finally:
             await browser.close()
 
@@ -201,6 +218,77 @@ async def test_search_resolution_ignores_promoted_video_and_hidden_suggestion(pa
     assert await rows.count() == 2
     assert await rows.nth(0).evaluate(SONG_TYPE_SCRIPT) == "MUSIC_VIDEO_TYPE_UGC"
     assert await rows.nth(1).evaluate(SONG_TYPE_SCRIPT) == "MUSIC_VIDEO_TYPE_ATV"
+
+
+@pytest.mark.parametrize(
+    ("url", "initial_id", "ad"),
+    [
+        ("https://youtu.be/aaaaaaaaaaa", "bbbbbbbbbbb", True),
+        ("https://www.youtube.com/watch?v=aaaaaaaaaaa&list=playlist", "bbbbbbbbbbb", False),
+        ("https://music.youtube.com/watch?v=aaaaaaaaaaa", "aaaaaaaaaaa", True),
+    ],
+)
+@pytest.mark.parametrize(
+    ("artist", "expected_artist"), [("Artist", "Artist"), ("", "Unknown artist")]
+)
+async def test_link_resolution_waits_for_requested_non_ad_metadata(
+    guarded_search_page, url, initial_id, ad, artist, expected_artist
+):
+    page = guarded_search_page
+
+    async def fulfill(route):
+        await route.fulfill(
+            body=f"""
+            <div id="movie_player" class="{"ad-showing" if ad else ""}"></div>
+            <ytmusic-player-bar>
+              <span class="title">Stale ad title</span><span class="byline">Stale ad artist</span>
+            </ytmusic-player-bar>
+            <video></video>
+            <script>
+              window.videoId = '{initial_id}';
+              window.videoTitle = 'Advertisement';
+              window.mediaPauses = 0;
+              document.querySelector('video').pause = () => window.mediaPauses++;
+              document.querySelector('#movie_player').getVideoData = () => ({{
+                video_id: window.videoId, title: window.videoTitle, author: '{artist}'
+              }});
+            </script>
+            """,
+        )
+
+    await page.route("https://music.youtube.com/watch?v=aaaaaaaaaaa", fulfill)
+    adapter = MusicBrowser(Path("."))
+    adapter.search_page = page
+    pending = asyncio.create_task(adapter.resolve(url))
+    await page.locator("#movie_player").wait_for(state="attached")
+    assert not pending.done()
+    await page.evaluate(
+        """() => {
+            const video = document.querySelector('video');
+            video.muted = false;
+            video.volume = 1;
+            video.dispatchEvent(new Event('playing'));
+        }"""
+    )
+    assert await page.evaluate("document.querySelector('video').muted")
+    assert await page.evaluate("document.querySelector('video').volume") == 0
+    if ad:
+        assert await page.evaluate("window.mediaPauses") == 0
+    else:
+        assert await page.evaluate("window.mediaPauses") > 0
+    await page.evaluate(
+        """() => {
+            window.videoId = 'aaaaaaaaaaa';
+            window.videoTitle = 'Requested song';
+        }"""
+    )
+    if ad:
+        await page.wait_for_timeout(100)
+        assert not pending.done()
+        await page.locator("#movie_player").evaluate("(e) => e.classList.remove('ad-showing')")
+        await page.evaluate("document.querySelector('video').dispatchEvent(new Event('playing'))")
+        assert await page.evaluate("window.mediaPauses") > 0
+    assert await pending == Song("aaaaaaaaaaa", "Requested song", expected_artist)
 
 
 async def test_observe_closed_browser_has_actionable_error(page):

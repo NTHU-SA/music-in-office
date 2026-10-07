@@ -74,6 +74,7 @@ class Player:
         self._notification_attempts = 0
         self._notification_retry_at = 0.0
         self._failed_request: Request | None = None
+        self._deferred_ad = False
 
     def snapshot(self) -> Snapshot:
         return Snapshot(
@@ -95,7 +96,7 @@ class Player:
         await self.browser.policy(
             self.current.song.video_id if self.current else None,
             self.autoplay and not self.queue and not self.error,
-            self.paused or bool(self.error) or self.current is None,
+            self.paused or bool(self.error) or (self.current is None and not self._deferred_ad),
         )
 
     async def request(self, query: str, requester: str) -> Request:
@@ -114,11 +115,7 @@ class Player:
                         if not self.paused and (
                             self.current is None or self.current.requester is None
                         ):
-                            observation = await self.browser.observe()
-                            if self.current is None or not observation.advertisement:
-                                await self._start_request()
-                            else:
-                                await self._policy()
+                            await self._start_request()
                         else:
                             await self._policy()
                 except PlaybackError as exc:
@@ -127,6 +124,14 @@ class Player:
 
     async def _start_request(self) -> None:
         request = self.queue[0]
+        observed = await self.browser.observe()
+        if observed.advertisement:
+            self._deferred_ad = True
+            await self._policy()
+            if observed.paused and observed.ready and not self.paused:
+                await self.browser.resume()
+            return
+        self._deferred_ad = False
         # Keep the request queued on navigation/start failure.
         try:
             await self.browser.play(request.song, paused=self.paused)
@@ -159,6 +164,9 @@ class Player:
                     or self._failed_request is not None
                 ):
                     await self._start_request()
+                    if self._deferred_ad:
+                        self._started_at = time.monotonic()
+                        self._previous = None
                 elif self.current:
                     await self._policy()
                     await self.browser.resume()
@@ -238,7 +246,27 @@ class Player:
                 await self.browser.pause()
                 self._previous = None
                 return
+            if observed.advertisement and not self.current and self.queue:
+                await self._start_request()
             if not self.current:
+                if observed.advertisement:
+                    previous = self._previous
+                    if (
+                        previous is None
+                        or not previous.advertisement
+                        or previous.position != observed.position
+                    ):
+                        self._started_at = time.monotonic()
+                    elif time.monotonic() - self._started_at > 60:
+                        raise PlaybackError(
+                            "Advertisement playback stalled. Check Edge/network, then use /resume."
+                        )
+                    self._previous = observed
+                    return
+                if self.queue:
+                    await self._start_request()
+                    return
+                self._deferred_ad = False
                 await self._policy()
                 return
             if observed.advertisement:

@@ -336,6 +336,75 @@ async def test_new_request_during_recommendation_ad_waits_without_skipping_ad(ri
     assert browser.plays == [A, B]
 
 
+async def test_idle_ad_defers_request_until_tick_after_ad(rig):
+    player, browser, announcements, _ = rig
+    browser.state = Observation(C, ready=True, paused=False, advertisement=True)
+    await player.request("a", "Alice")
+    assert browser.plays == []
+    assert [item.song for item in player.queue] == [A]
+    assert browser.policies[-1] == (None, False, False)
+    await player.tick()
+    assert browser.plays == []
+    assert not announcements
+    browser.state = Observation(None)
+    await player.tick()
+    assert browser.plays == [A]
+    assert not player.queue
+
+
+async def test_resume_queued_request_during_paused_ad_resumes_ad_first(rig):
+    player, browser, _, _ = rig
+    browser.state = Observation(C, ready=True, paused=False, advertisement=True)
+    await player.pause()
+    await player.request("a", "Alice")
+    await player.resume()
+    assert browser.plays == []
+    assert not browser.state.paused
+    assert browser.policies[-1] == (None, False, False)
+    await player.tick()
+    assert browser.plays == []
+    browser.state = Observation(None)
+    await player.tick()
+    assert browser.plays == [A]
+
+
+async def test_resume_queued_recommendation_ad_does_not_navigate(rig):
+    player, browser, _, _ = rig
+    await player.request("a", "Alice")
+    browser.state = Observation(C, ready=True, paused=False)
+    await advance(player, browser)
+    browser.state = replace(browser.state, advertisement=True)
+    await player.pause()
+    await player.request("b", "Bob")
+    await player.resume()
+    assert browser.plays == [A]
+    assert not browser.state.paused
+    browser.state = replace(browser.state, advertisement=False)
+    await player.tick()
+    assert browser.plays == [A, B]
+
+
+async def test_resume_stalled_deferred_ad_resets_stall_tracking(rig):
+    player, browser, _, errors = rig
+    browser.state = Observation(C, ready=True, paused=False, advertisement=True)
+    await player.request("a", "Alice")
+    await player.tick()
+    player._started_at -= 61
+    with pytest.raises(PlaybackError, match="Advertisement playback stalled") as stalled:
+        await player.tick()
+    await player._block(str(stalled.value))
+    assert browser.state.paused
+    assert errors == ["Advertisement playback stalled. Check Edge/network, then use /resume."]
+    await player.resume()
+    assert not browser.state.paused
+    assert player._previous is None
+    await player.tick()
+    assert browser.plays == []
+    browser.state = Observation(None)
+    await player.tick()
+    assert browser.plays == [A]
+
+
 async def test_skip_failed_first_request_discards_only_that_request(rig):
     player, browser, _, _ = rig
     browser.play_error = True
