@@ -409,7 +409,11 @@ class MusicBrowser:
     async def close(self) -> None:
         try:
             if self.context:
-                await self.context.close()
+                try:
+                    await self.context.close()
+                except PlaywrightError as exc:
+                    if "Target page, context or browser has been closed" not in str(exc):
+                        raise
         finally:
             if self.playwright:
                 await self.playwright.stop()

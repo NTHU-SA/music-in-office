@@ -61,6 +61,33 @@ async def test_login_launch_failure_is_reported_and_driver_closed(tmp_path, monk
     playwright.stop.assert_awaited_once()
 
 
+@pytest.mark.parametrize(
+    ("error", "should_raise"),
+    [
+        (
+            PlaywrightError(
+                "BrowserContext.close: Target page, context or browser has been closed"
+            ),
+            False,
+        ),
+        (PlaywrightError("BrowserContext.close: Profile I/O failure"), True),
+    ],
+)
+async def test_close_stops_driver_after_context_error(tmp_path, error, should_raise):
+    browser = MusicBrowser(tmp_path)
+    browser.context = Mock(close=AsyncMock(side_effect=error))
+    playwright = Mock(stop=AsyncMock())
+    browser.playwright = playwright
+    if should_raise:
+        with pytest.raises(PlaywrightError, match="Profile I/O failure"):
+            await browser.close()
+    else:
+        await browser.close()
+    playwright.stop.assert_awaited_once()
+    assert browser.context is None
+    assert browser.playwright is None
+
+
 async def test_real_headless_edge_keeps_profile_and_does_not_mute_audio(tmp_path, monkeypatch):
     original_goto = Page.goto
 
