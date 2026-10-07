@@ -25,7 +25,7 @@ function fixture(saved) {
             listeners.play({target: this});
         }
     }
-    const media = new Media();
+    let media = new Media();
     let advertisement = false;
     let info = {video_id: "aaaaaaaaaaa", title: "Fallback", author: "Artist"};
     let rows = [];
@@ -65,6 +65,7 @@ function fixture(saved) {
         ad: value => { advertisement = value; },
         info: value => { info = value; },
         rows: value => { rows = value; },
+        replaceMedia: () => { media = new Media(); return media; },
         time: value => { now = value; }
     };
 }
@@ -167,9 +168,114 @@ test("disconnect and missing heartbeat pause playback without resuming on reconn
 test("autoplay rejection is actionable and persists paused state", async () => {
     const f = fixture();
     await f.run("initialize", {role: "playback"});
-    f.media.play = async () => { throw new Error("NotAllowedError"); };
+    f.media.play = async () => { throw Object.assign(new Error("Autoplay denied"),
+        {name: "NotAllowedError"}); };
     await assert.rejects(f.run("resume"), /Click Play once/);
     assert.equal(JSON.parse(f.stored.get("office-music-policy")).paused, true);
+    assert.equal(f.media.paused, true);
+});
+
+test("resume waits for the requested song to be ready before playing", async () => {
+    const f = fixture();
+    await f.run("initialize", {role: "playback"});
+    f.media.readyState = 0;
+    let calls = 0;
+    const play = f.media.play.bind(f.media);
+    f.media.play = async () => { calls++; await play(); };
+    const pending = f.run("play", {id: "bbbbbbbbbbb", paused: false});
+    await new Promise(resolve => setTimeout(resolve, 120));
+    assert.equal(calls, 0);
+    f.media.readyState = 4;
+    await new Promise(resolve => setTimeout(resolve, 120));
+    assert.equal(calls, 0);
+    f.info({video_id: "bbbbbbbbbbb", title: "Requested", author: "Artist"});
+    await pending;
+    assert.equal(calls, 1);
+    assert.equal(f.media.paused, false);
+});
+
+test("load interruptions retry against the current media element", async () => {
+    const f = fixture();
+    await f.run("initialize", {role: "playback"});
+    let replacement;
+    f.media.play = async () => {
+        replacement = f.replaceMedia();
+        replacement.paused = true;
+        throw Object.assign(new Error("The play() request was interrupted by a new load request."),
+            {name: "AbortError"});
+    };
+    await f.run("play", {id: "aaaaaaaaaaa", paused: false});
+    assert.equal(replacement.paused, false);
+    assert.equal(JSON.parse(f.stored.get("office-music-policy")).paused, false);
+});
+
+test("repeated load interruptions stop after three attempts without autoplay advice", async () => {
+    const f = fixture();
+    await f.run("initialize", {role: "playback"});
+    let calls = 0;
+    f.media.play = async () => {
+        calls++;
+        throw Object.assign(new Error("New load request"), {name: "AbortError"});
+    };
+    await assert.rejects(f.run("resume"), error =>
+        /Playback failed.*New load request/.test(error.message) &&
+        !error.message.includes("Click Play once"));
+    assert.equal(calls, 3);
+    assert.equal(JSON.parse(f.stored.get("office-music-policy")).paused, true);
+    assert.equal(f.media.paused, true);
+});
+
+test("non-permission playback errors are not retried or labeled autoplay blocks", async () => {
+    const f = fixture();
+    await f.run("initialize", {role: "playback"});
+    let calls = 0;
+    f.media.play = async () => {
+        calls++;
+        throw Object.assign(new Error("Unsupported media"), {name: "NotSupportedError"});
+    };
+    await assert.rejects(f.run("resume"), /Playback failed.*Unsupported media/);
+    assert.equal(calls, 1);
+    assert.equal(JSON.parse(f.stored.get("office-music-policy")).paused, true);
+});
+
+test("pause during a load interruption prevents further play attempts", async () => {
+    const f = fixture();
+    await f.run("initialize", {role: "playback"});
+    let calls = 0;
+    f.media.play = async () => {
+        calls++;
+        await f.run("pause");
+        throw Object.assign(new Error("Interrupted by pause"), {name: "AbortError"});
+    };
+    await assert.rejects(f.run("resume"), /Playback was paused or disconnected/);
+    assert.equal(calls, 1);
+    assert.equal(f.media.paused, true);
+});
+
+test("loading timeout persists paused state without attempting playback", async () => {
+    const f = fixture();
+    await f.run("initialize", {role: "playback"});
+    f.media.readyState = 0;
+    let calls = 0;
+    f.media.play = async () => { calls++; };
+    const pending = assert.rejects(f.run("resume"), /still loading/);
+    f.time(12000);
+    await pending;
+    assert.equal(calls, 0);
+    assert.equal(JSON.parse(f.stored.get("office-music-policy")).paused, true);
+    assert.equal(f.media.paused, true);
+});
+
+test("failure to start after play resolves also restores paused policy", async () => {
+    const f = fixture();
+    await f.run("initialize", {role: "playback"});
+    f.media.play = async () => {};
+    const pending = assert.rejects(f.run("resume"), /YouTube Music did not start/);
+    await new Promise(resolve => setTimeout(resolve, 120));
+    f.time(12000);
+    await pending;
+    assert.equal(JSON.parse(f.stored.get("office-music-policy")).paused, true);
+    assert.equal(f.media.paused, true);
 });
 
 test("paused deliberate replay stays paused and creates a new generation on reload", async () => {
