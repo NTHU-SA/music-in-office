@@ -1,0 +1,118 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build Windows portable release
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Validate release version
+        shell: python
+        run: |
+          import ast
+          import os
+          import re
+          import tomllib
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+
+          tag = os.environ["GITHUB_REF_NAME"]
+          if not re.fullmatch(r"v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)", tag):
+              raise SystemExit(f"Invalid release tag {tag!r}; use vMAJOR.MINOR.PATCH.")
+          version = tag[1:]
+          metadata = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+          module = ast.parse(Path("src/office_music_bot/__init__.py").read_text(encoding="utf-8"))
+          engine_version = next(
+              ast.literal_eval(node.value)
+              for node in module.body
+              if isinstance(node, ast.Assign)
+              and any(isinstance(target, ast.Name) and target.id == "__version__"
+                      for target in node.targets)
+          )
+          desktop = ET.parse("OfficeMusicDesktop/OfficeMusicDesktop.csproj")
+          manifest = ET.parse("OfficeMusicDesktop/Package.appxmanifest")
+          identity = manifest.find("{http://schemas.microsoft.com/appx/manifest/foundation/windows10}Identity")
+          versions = {
+              "pyproject.toml": (metadata["project"]["version"], version),
+              "engine": (engine_version, version),
+              "desktop": (desktop.findtext("./PropertyGroup/Version"), version),
+              "manifest": (identity.attrib["Version"], f"{version}.0"),
+          }
+          for name, (actual, expected) in versions.items():
+              if actual != expected:
+                  raise SystemExit(f"{name} version {actual!r} does not match {expected!r}.")
+          print(f"Building {tag}")
+
+      - name: Install build dependencies
+        run: |
+          python -m venv .venv
+          if ($LASTEXITCODE -ne 0) { throw "Virtual environment creation failed." }
+          .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+          if ($LASTEXITCODE -ne 0) { throw "Dependency installation failed." }
+
+      - name: Test, lint, compile and package
+        run: .\scripts\build.ps1
+
+      - name: Generate checksum
+        run: |
+          $Archive = ".\dist\OfficeMusicBot-win-x64.zip"
+          $Hash = (Get-FileHash -LiteralPath $Archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$Hash  OfficeMusicBot-win-x64.zip" |
+            Set-Content -LiteralPath ".\dist\OfficeMusicBot-win-x64.zip.sha256" -Encoding ascii
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-win-x64
+          path: |
+            dist\OfficeMusicBot-win-x64.zip
+            dist\OfficeMusicBot-win-x64.zip.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-win-x64
+          path: release
+
+      - name: Publish release and assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            release/OfficeMusicBot-win-x64.zip \
+            release/OfficeMusicBot-win-x64.zip.sha256 \
+            --verify-tag --generate-notes --title "$GITHUB_REF_NAME"
