@@ -132,7 +132,7 @@ public partial class MainPageViewModel : ObservableObject
         {
             IsRunning = true;
             ConnectionStatus = "正在連線";
-            ConnectionDetail = "正在連線至 Discord，使用無視窗 Edge 播放。";
+            ConnectionDetail = "正在連線至 Discord 與 Chromium 擴充套件，請保持瀏覽器開啟。";
             var packet = await _backend.RequestAsync("start", Settings());
             _dirty = false;
             SavedStatus = packet.Message;
@@ -159,7 +159,7 @@ public partial class MainPageViewModel : ObservableObject
         {
             IsAuthenticating = true;
             ConnectionStatus = "正在開啟登入視窗";
-            ConnectionDetail = "請自行登入 Google，完成後關閉登入視窗。登入期間請勿讓他人使用。";
+            ConnectionDetail = "請在擴充套件的專用分頁自行登入 Google。登入期間請勿讓他人使用。";
             if (_dirty)
             {
                 var saved = await _backend.RequestAsync("save", Settings());
@@ -188,7 +188,7 @@ public partial class MainPageViewModel : ObservableObject
         try
         {
             ConnectionStatus = "正在停止";
-            ConnectionDetail = "正在關閉 bot 與專用 Edge，設定與登入狀態會保留。";
+            ConnectionDetail = "正在停止 bot 與擴充套件播放，瀏覽器分頁與設定會保留。";
             await _backend.RequestAsync("stop");
         }
         catch (Exception exception)
@@ -258,7 +258,7 @@ public partial class MainPageViewModel : ObservableObject
                 {
                     ConnectionStatus = "已停止";
                     ConnectionDetail = wasAuthenticating ?
-                        "登入視窗已關閉；登入狀態如有建立會保留。按「儲存並啟動」開始無視窗播放。" :
+                        "登入連線已結束；分頁與登入狀態會保留。按「儲存並啟動」開始播放。" :
                         "設定已保留。隨時可以重新啟動。";
                     PlaybackStatus = "等待點歌";
                     SongTitle = "今天，想聽什麼？";

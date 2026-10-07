@@ -22,8 +22,9 @@
     <WindowsPackageType>None</WindowsPackageType>
     <EnableMsixTooling>false</EnableMsixTooling>
     <EnableWinAppRunSupport>false</EnableWinAppRunSupport>
-    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
-    <SelfContained>true</SelfContained>
+    <WindowsAppSDKSelfContained>false</WindowsAppSDKSelfContained>
+    <SelfContained>false</SelfContained>
+    <PublishReadyToRun>false</PublishReadyToRun>
   </PropertyGroup>
 
   <ItemGroup>
@@ -103,6 +104,9 @@
     <Error Condition="!Exists('$(TargetDir)$(TargetName).pri')"
            Text="The generated WinUI resource index is missing." />
     <ItemGroup>
+      <!-- Mirror the SDK's framework-mode ML copy suppression in the publish pipeline. -->
+      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)"
+                             Condition="'%(ResolvedFileToPublish.NuGetPackageId)' == 'Microsoft.Windows.AI.MachineLearning' and '%(ResolvedFileToPublish.AssetType)' == 'native'" />
       <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)"
                              Condition="'%(ResolvedFileToPublish.Extension)' == '.xbf' or '%(ResolvedFileToPublish.Filename)%(ResolvedFileToPublish.Extension)' == '$(TargetName).pri'" />
     </ItemGroup>

@@ -9,7 +9,7 @@ description = "Discord song requests played locally through YouTube Music on Win
 requires-python = ">=3.12"
 dependencies = [
     "discord.py>=2.6,<3",
-    "playwright>=1.55,<2",
+    "aiohttp>=3.12,<4",
 ]
 
 [project.optional-dependencies]

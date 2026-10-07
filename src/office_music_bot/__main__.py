@@ -49,9 +49,8 @@ async def login(directory: Path) -> None:
     browser = MusicBrowser(directory)
     try:
         await browser.start(interactive=True)
-        print("Sign in manually and confirm Premium. Close all login windows when finished.")
-        while browser.context and any(not page.is_closed() for page in browser.context.pages):
-            await asyncio.sleep(0.2)
+        print("Sign in in the managed Chromium tab. Press Ctrl+C when finished.")
+        await asyncio.Future()
     finally:
         await browser.close()
 
@@ -71,11 +70,11 @@ def main() -> int:
     parser.add_argument(
         "--probe-browser",
         action="store_true",
-        help="Check live Edge song search without Discord/audio",
+        help="Check live extension song search without Discord/audio",
     )
     parser.add_argument("--console", action="store_true", help="Use the legacy console mode")
     parser.add_argument(
-        "--login", action="store_true", help="Open visible Edge for manual YouTube Music login"
+        "--login", action="store_true", help="Open the extension tab for manual YouTube Music login"
     )
     parser.add_argument("--bridge", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -114,7 +113,7 @@ def main() -> int:
                     f"Configuration valid. Server: {config.guild_id}; channel: {config.channel_id}"
                 )
                 return 0
-            print("OfficeMusicBot running with headless Edge. Press Ctrl+C to stop.")
+            print("OfficeMusicBot running with Chromium extension. Press Ctrl+C to stop.")
             asyncio.run(run(config))
             return 0
     except KeyboardInterrupt:
