@@ -12,6 +12,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Lint failed." }
     & node --test tests\extension\*.test.cjs
     if ($LASTEXITCODE -ne 0) { throw "Extension tests failed." }
+    & dotnet run --project .\tests\launcher\LauncherTests.csproj -c Release --verbosity quiet
+    if ($LASTEXITCODE -ne 0) { throw "Launcher tests failed." }
     & $Python -m PyInstaller --noconfirm --clean --log-level WARN OfficeMusicBot.spec
     if ($LASTEXITCODE -ne 0) { throw "Executable build failed." }
     $EngineContents = & $Python -m PyInstaller.utils.cliutils.archive_viewer `
@@ -43,15 +45,31 @@ try {
             throw "Portable publish is incomplete: $Required"
         }
     }
-    $Payload = Join-Path $Root "dist\OfficeMusicDesktop.payload.zip"
-    Compress-Archive -Path (Join-Path $Output "*") -DestinationPath $Payload -Force
+    $Payload = Join-Path $Root "dist\OfficeMusicPayload.zip"
+    if (Test-Path -LiteralPath $Payload) { Remove-Item -LiteralPath $Payload -Force }
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [System.IO.Compression.ZipFile]::CreateFromDirectory($Output, $Payload)
+    $LauncherOutput = Join-Path $Root "dist\Launcher"
+    if (Test-Path -LiteralPath $LauncherOutput) {
+        Remove-Item -LiteralPath $LauncherOutput -Recurse -Force
+    }
     & dotnet publish .\OfficeMusicLauncher\OfficeMusicLauncher.csproj -c Release `
-        -o .\dist\launcher --verbosity quiet
-    if ($LASTEXITCODE -ne 0) { throw "Single executable launcher build failed." }
+        -o $LauncherOutput --verbosity quiet
+    if ($LASTEXITCODE -ne 0) { throw "Single-file launcher publish failed." }
+    $Files = @(Get-ChildItem -LiteralPath $LauncherOutput -File -Recurse)
+    if ($Files.Count -ne 1 -or $Files[0].Name -ne "OfficeMusicBot.exe") {
+        throw "The launcher publish must contain exactly one EXE."
+    }
     $Executable = Join-Path $Root "dist\OfficeMusicBot.exe"
-    Copy-Item .\dist\launcher\OfficeMusicBot.exe $Executable -Force
-    $Verify = Start-Process -FilePath $Executable -ArgumentList "--verify-payload" -PassThru -Wait
-    if ($Verify.ExitCode -ne 0) { throw "Single executable extraction check failed." }
+    Copy-Item -LiteralPath $Files[0].FullName -Destination $Executable -Force
+    $Check = Start-Process -FilePath $Executable -ArgumentList "--check" `
+        -PassThru -Wait -RedirectStandardOutput (Join-Path $Root "dist\launcher-check.log") `
+        -RedirectStandardError (Join-Path $Root "dist\launcher-check-error.log")
+    if ($Check.ExitCode -ne 0) {
+        Get-Content -LiteralPath (Join-Path $Root "dist\launcher-check-error.log")
+        throw "Single-file extraction and engine startup check failed."
+    }
+    Get-Content -LiteralPath (Join-Path $Root "dist\launcher-check.log")
     $Extension = Join-Path $Root "dist\OfficeMusicLink-extension.zip"
     Compress-Archive -Path .\extension\* -DestinationPath $Extension -Force
     foreach ($Artifact in @($Executable, $Extension)) {

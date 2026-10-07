@@ -40,9 +40,15 @@ exe 與瀏覽器都要保持開啟，分頁可以在背景，但不會隱藏帳�
 避免讓瀏覽器的睡眠分頁／節能功能凍結專用播放分頁。
 
 單一 EXE 首次執行會將內嵌的程式資源解壓到
-`%LOCALAPPDATA%\OfficeMusicBot\app\<payload hash>`，再啟動 WinUI。
-這是**單一下載／啟動檔**，不是零磁碟存取；更新會使用另一個版本目錄。
-舊版 cache 可在程式完全關閉後自行清理，設定不在 cache 裡。
+`%LOCALAPPDATA%\OfficeMusicBot\App\<payload hash>`，再啟動 WinUI。
+這是**單一下載／啟動檔**，不是零磁碟存取；更新會使用另一個版本目錄，
+後續啟動會驗證全部資源的完整性並重用快取，不覆蓋執行中的舊版。
+同一 Windows 帳號在不同登入工作階段啟動時，會共用跨工作階段的展開與清理鎖；
+不同帳號則使用各自的鎖與快取。
+啟動時保留目前版本、最近一版、仍有視窗或引擎執行的舊版及最近 24 小時內的快取。
+其他已確認且超過 24 小時的舊版元件目錄會安全清除；無法確認或刪除時保留目錄，
+並在 `%LOCALAPPDATA%\OfficeMusicBot\launcher.log` 記錄警告。設定不在 cache 裡，
+升級與清理不會刪除設定或瀏覽器登入資料。
 
 ## Discord 設定
 
@@ -114,11 +120,13 @@ python -m venv .venv
 .\scripts\build.ps1
 ```
 
-同一次 build 執行 Python／extension 測試與 lint，打包不含 Playwright／Node driver
+同一次 build 執行 Python／extension／launcher 測試與 lint，打包不含 Playwright／Node driver
 的 Python 引擎，發行 framework-dependent WinUI，再將必要資源嵌入單一 launcher EXE。
 最終輸出 `dist\OfficeMusicBot.exe` 與 `dist\OfficeMusicLink-extension.zip`；
-`dist\OfficeMusicDesktop`、payload ZIP、launcher 目錄是中間產物，不需要分發。
+`dist\OfficeMusicDesktop`、`dist\OfficeMusicPayload.zip`、launcher 目錄是中間產物，不需要分發。
 build 會輸出兩個交付檔案的實際 MiB，並驗證引擎啟動與 EXE 資源解壓。
+launcher 測試涵蓋展開、快取重用、升級、併發、跨行程鎖、損壞、路徑驗證及安全清理；
+最終 EXE 的 `--check` 驗證所有內含檔案與引擎啟動，不連 Discord 或播放音訊。
 不使用不安全的 WinUI trimming，也不將瀏覽器、Google cookie 或設定打包。
 
 開發時以「載入解壓縮」選 repository 的 `extension`，更新後重新載入擴充套件。
@@ -132,7 +140,7 @@ Python 入口保留診斷與舊版主控台模式：
 .\.venv\Scripts\python.exe -m office_music_bot
 ```
 
-`--check` 只驗證本機設定；`--login` 不需要 Discord 設定，完成後 Ctrl+C。
+Python 的 `--check` 只驗證本機設定；`--login` 不需要 Discord 設定，完成後 Ctrl+C。
 `--probe-browser` 使用已安裝 extension 搜尋，不連 Discord／不播放音訊。
 GUI 開發先建置引擎，再使用 `winapp run .\OfficeMusicDesktop --arch x64`。
 原生介面與引擎仍以私有 stdin/stdout 管線連線；引擎失敗不會關閉設定視窗。
@@ -144,7 +152,7 @@ Windows runner 一起建置兩個獨立交付檔案，成功後 Release 附上 E
 各自 SHA-256 與自動更新說明。使用內建 `GITHUB_TOKEN`，不需另設發布 token。
 
 發布前同步 `pyproject.toml`、Python `__init__.py`、desktop／launcher `.csproj`、
-extension `manifest.json` 的版本；appx manifest 使用四段版本（例如 `0.1.0.0`）。
+extension `manifest.json` 的版本；appx manifest 使用四段版本（例如 `0.1.1.0`）。
 版本與 tag 不一致會停止發布。EXE／ZIP 未簽署，不會自動安裝 extension 或 runtime。
 
 ## 限制與實機驗收
@@ -158,5 +166,5 @@ loopback Origin／Host 限制、排隊、DPAPI、單實例、設定保留及 IPC
 YouTube Music 沒有官方網頁控制 API，網站更新可能讓搜尋／播放器選擇器失效。
 遇到錯誤，點 extension 圖示查看專用分頁，處理登入／同意／音訊提示後重試。
 檢查 Windows 預設喇叭與瀏覽器音量；連線問題確認 port 18765 未被其他程式佔用。
-查看 `%LOCALAPPDATA%\OfficeMusicBot\desktop.log` 與 `bot.log`，
+查看 `%LOCALAPPDATA%\OfficeMusicBot\desktop.log`、`bot.log` 與 `launcher.log`，
 不要分享 token、設定或瀏覽器 profile。公開場所音樂授權需另行確認。

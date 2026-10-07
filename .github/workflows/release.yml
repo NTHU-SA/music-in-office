@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   build:
-    name: Build Windows portable release
+    name: Build Windows single-file release
     runs-on: windows-latest
     timeout-minutes: 30
     defaults:
@@ -39,6 +39,7 @@ jobs:
         shell: python
         run: |
           import ast
+          import json
           import os
           import re
           import tomllib
@@ -60,7 +61,6 @@ jobs:
           )
           desktop = ET.parse("OfficeMusicDesktop/OfficeMusicDesktop.csproj")
           launcher = ET.parse("OfficeMusicLauncher/OfficeMusicLauncher.csproj")
-          import json
           extension = json.loads(Path("extension/manifest.json").read_text(encoding="utf-8"))
           manifest = ET.parse("OfficeMusicDesktop/Package.appxmanifest")
           identity = manifest.find("{http://schemas.microsoft.com/appx/manifest/foundation/windows10}Identity")
