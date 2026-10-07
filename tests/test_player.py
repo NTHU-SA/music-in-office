@@ -84,6 +84,34 @@ async def test_idle_does_not_autoplay(rig):
     assert not announcements
 
 
+@pytest.mark.parametrize("lost_song", [None, B])
+async def test_resume_restores_current_song_after_managed_tab_replacement(rig, lost_song):
+    player, browser, announcements, _ = rig
+    await player.request("a", "Alice")
+    await advance(player, browser)
+    occurrence = player.current.occurrence
+    await player._block("Extension disconnected")
+    browser.state = Observation(lost_song, paused=True)
+    await player.resume()
+    assert browser.plays == [A, A]
+    assert player.current.requester == "Alice"
+    assert player.current.occurrence == occurrence
+    assert not player.error and not player.confirmed
+    await advance(player, browser)
+    assert len(announcements) == 1
+    assert browser.policies[-1] == (A.video_id, True, False)
+
+
+async def test_reconnect_resume_does_not_skip_an_existing_ad(rig):
+    player, browser, _, _ = rig
+    await player.request("a", "Alice")
+    await player._block("Extension disconnected")
+    browser.state = Observation(B, paused=True, advertisement=True, ready=True)
+    await player.resume()
+    assert browser.plays == [A]
+    assert not browser.state.paused
+
+
 async def test_requests_fifo_do_not_interrupt_requested_song(rig):
     player, browser, _, _ = rig
     await player.request("a", "Alice")

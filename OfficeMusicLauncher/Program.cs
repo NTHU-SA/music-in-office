@@ -70,6 +70,7 @@ internal static class Program
         catch (Exception exception)
         {
             string message = $"Office Music Bot 無法啟動。\n\n{exception.Message}\n\n" +
+                "請確認已安裝 .NET Desktop Runtime 10 x64 與 Windows App Runtime 2.5 x64。\n" +
                 "請重新下載 EXE。若展開的元件損壞，請關閉程式並刪除 " +
                 "%LOCALAPPDATA%\\OfficeMusicBot\\App 後重試。" +
                 "設定與瀏覽器登入資料存放在其他位置，不受影響。";

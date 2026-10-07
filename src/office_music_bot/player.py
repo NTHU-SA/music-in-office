@@ -168,8 +168,20 @@ class Player:
                         self._started_at = time.monotonic()
                         self._previous = None
                 elif self.current:
-                    await self._policy()
-                    await self.browser.resume()
+                    observed = await self.browser.observe()
+                    if not observed.advertisement and (
+                        observed.song is None
+                        or observed.song.video_id != self.current.song.video_id
+                    ):
+                        # A restarted browser or replaced managed tab has lost the song.
+                        await self.browser.play(self.current.song)
+                        self.confirmed = False
+                        self._previous = None
+                        self._waiting_recommendation = False
+                        await self._policy()
+                    else:
+                        await self._policy()
+                        await self.browser.resume()
                     self._started_at = time.monotonic()
                 else:
                     await self._policy()

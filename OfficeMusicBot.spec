@@ -1,16 +1,13 @@
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_all
-
 root = Path(SPECPATH)
-datas, binaries, hiddenimports = collect_all("playwright")
 a = Analysis(
     [str(root / "src" / "office_music_bot" / "__main__.py")],
     pathex=[str(root / "src")],
-    binaries=binaries,
-    datas=datas,
-    hiddenimports=hiddenimports,
-    excludes=["pytest", "ruff"],
+    binaries=[],
+    datas=[],
+    hiddenimports=[],
+    excludes=["pytest", "ruff", "playwright", "tkinter"],
     noarchive=False,
 )
 pyz = PYZ(a.pure)

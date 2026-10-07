@@ -79,7 +79,7 @@ class BotRunner:
             raise ConfigurationError("Another OfficeMusicBot instance is already running.")
         self._stop_requested.clear()
         self.events.put(
-            RuntimeEvent("login_opening", "正在開啟專用 Edge；請自行登入 YouTube Music。")
+            RuntimeEvent("login_opening", "正在等待 Chromium 擴充套件；請保持瀏覽器開啟。")
         )
         self.thread = threading.Thread(
             target=self._thread_main, args=(directory,), name="youtube-login", daemon=False
@@ -131,16 +131,11 @@ class BotRunner:
             self.events.put(
                 RuntimeEvent(
                     "login_ready",
-                    "請自行登入並確認 Premium；完成後按「完成登入並關閉」。"
+                    "請在擴充套件的專用分頁自行登入並確認 Premium；完成後按「完成登入並關閉」。"
                     "此時瀏覽器可操作，請勿讓他人使用。",
                 )
             )
-            while browser.context and any(not page.is_closed() for page in browser.context.pages):
-                try:
-                    await asyncio.wait_for(self._stop_event.wait(), timeout=0.2)
-                    break
-                except TimeoutError:
-                    continue
+            await self._stop_event.wait()
         finally:
             opening.cancel()
             stopping.cancel()
@@ -149,7 +144,7 @@ class BotRunner:
         self.events.put(
             RuntimeEvent(
                 "login_closed",
-                "登入視窗已關閉；登入狀態如有建立會保留，播放不會開啟瀏覽器視窗。",
+                "登入連線已結束；瀏覽器分頁與登入狀態會保留，可以啟動 bot。",
             )
         )
 
@@ -168,7 +163,7 @@ class BotRunner:
                         [connection, stopping], timeout=0.3, return_when=asyncio.FIRST_COMPLETED
                     )
                     if stopping in done:
-                        self.events.put(RuntimeEvent("stopping", "正在停止 bot 與專用 Edge…"))
+                        self.events.put(RuntimeEvent("stopping", "正在停止 bot 與擴充套件播放…"))
                         connection.cancel()
                         await asyncio.gather(connection, return_exceptions=True)
                         async with asyncio.timeout(20):

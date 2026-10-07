@@ -203,14 +203,10 @@ def test_bridge_login_needs_no_discord_settings_and_cannot_overlap(tmp_path):
     assert not handle_request({"command": "login"}, tmp_path, runner)["ok"]
 
 
-@pytest.mark.parametrize("close_window", [False, True])
 async def test_login_closes_browser_without_connecting_discord(
-    tmp_path, monkeypatch, close_window
+    tmp_path, monkeypatch
 ):
-    page = Mock(is_closed=Mock(return_value=False))
-    browser = Mock(
-        context=SimpleNamespace(pages=[page]), start=AsyncMock(), close=AsyncMock()
-    )
+    browser = Mock(start=AsyncMock(), close=AsyncMock())
     monkeypatch.setattr("office_music_bot.runtime.MusicBrowser", Mock(return_value=browser))
     runner = BotRunner(Mock(side_effect=AssertionError("Discord must not start")))
     session = asyncio.create_task(runner._login_session(tmp_path))
@@ -218,10 +214,7 @@ async def test_login_closes_browser_without_connecting_discord(
         async with asyncio.timeout(2):
             while not any(event.kind == "login_ready" for event in events(runner)):
                 await asyncio.sleep(0.01)
-        if close_window:
-            page.is_closed.return_value = True
-        else:
-            runner.stop()
+        runner.stop()
         await asyncio.wait_for(session, 2)
         browser.start.assert_awaited_once_with(interactive=True)
         browser.close.assert_awaited_once()

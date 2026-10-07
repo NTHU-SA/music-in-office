@@ -31,10 +31,15 @@ jobs:
         with:
           dotnet-version: "10.0.x"
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
       - name: Validate release version
         shell: python
         run: |
           import ast
+          import json
           import os
           import re
           import tomllib
@@ -56,6 +61,7 @@ jobs:
           )
           desktop = ET.parse("OfficeMusicDesktop/OfficeMusicDesktop.csproj")
           launcher = ET.parse("OfficeMusicLauncher/OfficeMusicLauncher.csproj")
+          extension = json.loads(Path("extension/manifest.json").read_text(encoding="utf-8"))
           manifest = ET.parse("OfficeMusicDesktop/Package.appxmanifest")
           identity = manifest.find("{http://schemas.microsoft.com/appx/manifest/foundation/windows10}Identity")
           versions = {
@@ -63,6 +69,7 @@ jobs:
               "engine": (engine_version, version),
               "desktop": (desktop.findtext("./PropertyGroup/Version"), version),
               "launcher": (launcher.findtext("./PropertyGroup/Version"), version),
+              "extension": (extension["version"], version),
               "manifest": (identity.attrib["Version"], f"{version}.0"),
           }
           for name, (actual, expected) in versions.items():
@@ -82,10 +89,10 @@ jobs:
 
       - name: Generate checksum
         run: |
-          $Executable = ".\dist\OfficeMusicBot.exe"
-          $Hash = (Get-FileHash -LiteralPath $Executable -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$Hash  OfficeMusicBot.exe" |
-            Set-Content -LiteralPath ".\dist\OfficeMusicBot.exe.sha256" -Encoding ascii
+          foreach ($Name in @("OfficeMusicBot.exe", "OfficeMusicLink-extension.zip")) {
+            $Hash = (Get-FileHash -LiteralPath ".\dist\$Name" -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$Hash  $Name" | Set-Content -LiteralPath ".\dist\$Name.sha256" -Encoding ascii
+          }
 
       - uses: actions/upload-artifact@v4
         with:
@@ -93,6 +100,8 @@ jobs:
           path: |
             dist\OfficeMusicBot.exe
             dist\OfficeMusicBot.exe.sha256
+            dist\OfficeMusicLink-extension.zip
+            dist\OfficeMusicLink-extension.zip.sha256
           if-no-files-found: error
           retention-days: 7
 
@@ -117,4 +126,6 @@ jobs:
           gh release create "$GITHUB_REF_NAME" \
             release/OfficeMusicBot.exe \
             release/OfficeMusicBot.exe.sha256 \
+            release/OfficeMusicLink-extension.zip \
+            release/OfficeMusicLink-extension.zip.sha256 \
             --verify-tag --generate-notes --title "$GITHUB_REF_NAME"
