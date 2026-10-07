@@ -208,16 +208,23 @@
                         "ytmusic-search-page ytmusic-responsive-list-item-renderer"
                     )) {
                         if (!visible(row)) continue;
-                        const kind = row.data?.flexColumns?.[0]
-                            ?.musicResponsiveListItemFlexColumnRenderer?.text?.runs?.[0]
-                            ?.navigationEndpoint?.watchEndpoint?.watchEndpointMusicSupportedConfigs
+                        const runs = row.data?.flexColumns?.[0]
+                            ?.musicResponsiveListItemFlexColumnRenderer?.text?.runs || [];
+                        const link = row.querySelector('a[href*="watch?v="]');
+                        const endpoint = runs.find(run => run.navigationEndpoint?.watchEndpoint)
+                            ?.navigationEndpoint.watchEndpoint
+                            || row.data?.navigationEndpoint?.watchEndpoint
+                            || row.data?.overlay?.musicItemThumbnailOverlayRenderer?.content
+                                ?.musicPlayButtonRenderer?.playNavigationEndpoint?.watchEndpoint
+                            || link?.data?.navigationEndpoint?.watchEndpoint;
+                        const kind = endpoint?.watchEndpointMusicSupportedConfigs
                             ?.watchEndpointMusicConfig?.musicVideoType;
                         if (kind !== "MUSIC_VIDEO_TYPE_ATV") continue;
-                        const link = row.querySelector('a[href*="watch?v="]');
-                        if (!link) continue;
-                        const url = new URL(link.getAttribute("href"), location.origin);
-                        const id = url.searchParams.get("v");
-                        const title = link.textContent.trim();
+                        const href = link?.getAttribute("href");
+                        const id = endpoint.videoId ||
+                            (href ? new URL(href, location.origin).searchParams.get("v") : null);
+                        const title = link?.textContent?.trim() ||
+                            runs.map(run => run.text || "").join("").trim();
                         if (!/^[A-Za-z0-9_-]{11}$/.test(id) || !title) continue;
                         const artist = row.querySelector(
                             '.secondary-flex-columns a[href*="channel/"], ' +
