@@ -10,6 +10,7 @@ function fixture() {
     const commands = [];
     const sockets = [];
     let nextId = 1;
+    let now = 0;
     class Socket {
         static OPEN = 1;
         constructor(url) {
@@ -33,8 +34,9 @@ function fixture() {
             async get(id) {
                 const tab = tabState.get(id);
                 if (!tab) throw new Error("Tab closed");
-                if (++tab.reads >= 3) {
+                if (++tab.reads >= 3 && tab.pendingUrl) {
                     tab.url = tab.pendingUrl;
+                    delete tab.pendingUrl;
                     tab.status = "complete";
                 }
                 return {...tab};
@@ -68,8 +70,9 @@ function fixture() {
         runtime: {onStartup: listener, onInstalled: listener}
     };
     const context = {
-        chrome, WebSocket: Socket, console, Date, Promise, JSON, Object, encodeURIComponent,
-        setTimeout: fn => { if (fn.name !== "connect") fn(); },
+        chrome, WebSocket: Socket, console, Date: {now: () => now},
+        Promise, JSON, Object, URL, encodeURIComponent,
+        setTimeout: (fn, ms) => { if (fn.name !== "connect") { now += ms; fn(); } },
         setInterval() {}, clearInterval() {}
     };
     vm.runInNewContext(source, context);
@@ -105,6 +108,68 @@ test("navigation waits for new document and reuses owned tabs", async () => {
     assert.deepEqual(f.commands.slice(-2).map(value => value.command), ["policy", "play"]);
     assert.equal(f.tabState.get(f.storage.tabs.playback).url,
         "https://music.youtube.com/watch?v=aaaaaaaaaaa");
+});
+
+test("navigation accepts rewritten encoding and added parameters for the same route", async () => {
+    for (const [requested, committed] of [
+        ["https://music.youtube.com/search?q=Japanese%20song",
+         "https://music.youtube.com/search?q=Japanese+song&feature=search"],
+        ["https://music.youtube.com/search?q=%E6%97%A5%E6%96%87%E6%AD%8C",
+         "https://music.youtube.com/search?feature=search&q=日文歌"],
+        ["https://music.youtube.com/watch?v=aaaaaaaaaaa",
+         "https://music.youtube.com/watch?v=aaaaaaaaaaa&list=RDAMVMaaaaaaaaaaa"],
+        ["https://music.youtube.com/", "https://music.youtube.com/?hl=zh-TW"]
+    ]) {
+        const f = fixture();
+        f.tabState.set(1, {id: 1, url: committed, status: "complete"});
+        f.context.chrome.tabs.get = async () => ({...f.tabState.get(1)});
+        await f.context.loaded(1, requested);
+    }
+});
+
+test("navigation rejects a different song, search, path or origin", async () => {
+    for (const [requested, committed, error] of [
+        ["https://music.youtube.com/watch?v=aaaaaaaaaaa",
+         "https://music.youtube.com/watch?v=bbbbbbbbbbb", /navigation timed out/],
+        ["https://music.youtube.com/search?q=New",
+         "https://music.youtube.com/search?q=Old", /navigation timed out/],
+        ["https://music.youtube.com/search?q=New",
+         "https://music.youtube.com/", /navigation timed out/],
+        ["https://music.youtube.com/watch?v=aaaaaaaaaaa",
+         "https://accounts.google.com/", /login\/consent/]
+    ]) {
+        const f = fixture();
+        f.context.chrome.tabs.get = async () => ({url: committed, status: "complete"});
+        await assert.rejects(f.context.loaded(1, requested), error);
+    }
+});
+
+test("pending navigation cannot mistake the old completed document for the new one", async () => {
+    const f = fixture();
+    const url = "https://music.youtube.com/watch?v=aaaaaaaaaaa";
+    let reads = 0;
+    f.context.chrome.tabs.get = async () => {
+        reads++;
+        return {url, status: "complete", ...(reads < 3 ? {pendingUrl: url} : {})};
+    };
+    await f.context.loaded(1, url);
+    assert.equal(reads, 3);
+});
+
+test("disconnect during navigation prevents waiting or running the new command", async () => {
+    const f = fixture();
+    f.sockets[0].open();
+    await f.context.dispatch("initialize", {interactive: false}, 1);
+    const update = f.context.chrome.tabs.update;
+    f.context.chrome.tabs.update = async (...args) => {
+        const result = await update(...args);
+        f.sockets[0].close();
+        return result;
+    };
+    await assert.rejects(f.context.dispatch("play", {
+        url: "https://music.youtube.com/watch?v=aaaaaaaaaaa", id: "aaaaaaaaaaa", paused: false
+    }, 1), /disconnected/);
+    assert.equal(f.commands.some(value => value.command === "play"), false);
 });
 
 test("closed or repurposed owned tabs are replaced, never script a personal site", async () => {

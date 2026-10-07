@@ -92,18 +92,35 @@ async function run(tabId, command, args = {}, activeEpoch = null) {
 async function navigate(tabId, url, activeEpoch) {
     requireEpoch(activeEpoch);
     await chrome.tabs.update(tabId, {url});
-    await loaded(tabId, url);
+    await loaded(tabId, url, activeEpoch);
 }
 
-async function loaded(tabId, url) {
+function sameRoute(actual, expected) {
+    if (!actual) return false;
+    const current = new URL(actual);
+    const target = new URL(expected);
+    if (current.origin !== target.origin || current.pathname !== target.pathname) return false;
+    const key = target.pathname === "/watch" ? "v" :
+        target.pathname === "/search" ? "q" : null;
+    return key === null || current.searchParams.get(key) === target.searchParams.get(key);
+}
+
+async function loaded(tabId, url, activeEpoch = null) {
     // Wait for the new document rather than accidentally commanding the old one.
     const deadline = Date.now() + 15000;
     while (Date.now() < deadline) {
+        requireEpoch(activeEpoch);
         const tab = await chrome.tabs.get(tabId);
-        if (tab.status === "complete" && tab.url === url) return;
+        if (tab.status === "complete" && !tab.pendingUrl && sameRoute(tab.url, url)) return;
+        if (tab.status === "complete" && !tab.pendingUrl &&
+            !tab.url?.startsWith("https://music.youtube.com/")) {
+            throw new Error("YouTube Music redirected outside the music site. " +
+                "Check login/consent in the managed tab, then retry.");
+        }
         await sleep(150);
     }
-    throw new Error("YouTube Music navigation timed out. Check the managed tab.");
+    throw new Error("YouTube Music navigation timed out before reaching the requested page. " +
+        "Check network/login/consent in the managed tab, then retry.");
 }
 
 async function dispatch(command, args, activeEpoch) {

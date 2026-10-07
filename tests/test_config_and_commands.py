@@ -9,7 +9,7 @@ import pytest
 from office_music_bot.browser import PlaybackError, Song, normalize_query
 from office_music_bot.config import Config, ConfigurationError, InstanceLock, _protect, load_config
 from office_music_bot.discord_bot import MusicBot, allowed_channel, now_playing_message
-from office_music_bot.player import Playing
+from office_music_bot.player import Playing, Request, Snapshot
 
 
 @pytest.mark.parametrize(
@@ -141,6 +141,39 @@ async def test_tree_rejects_wrong_channel_without_command_execution():
     interaction.response.send_message = AsyncMock()
     assert not await bot.tree.interaction_check(interaction)
     interaction.response.send_message.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    ("query", "label"),
+    [
+        ("  日文歌  ", "日文歌"),
+        ("https://youtu.be/aaaaaaaaaaa?t=10", "https://youtu.be/aaaaaaaaaaa?t=10"),
+        ("@everyone **日文歌**", "@\u200beveryone \\*\\*日文歌\\*\\*"),
+        ("字" * 300, "字" * 300),
+    ],
+)
+@pytest.mark.parametrize("paused,error", [(False, None), (True, None), (True, "Load failed")])
+async def test_play_reply_includes_original_input(query, label, paused, error):
+    bot = MusicBot(Config("synthetic", 123, 456, Path(".")))
+    song = Song("aaaaaaaaaaa", "好きだから。 - Sukidakara", "Yuika")
+    bot.player.request = AsyncMock(return_value=Request(song, "Alice"))
+    bot.player.snapshot = MagicMock(
+        return_value=Snapshot(None, (), paused, True, error, False)
+    )
+    interaction = AsyncMock(spec=discord.Interaction)
+    interaction.user = MagicMock(display_name="Alice")
+    interaction.response.defer = AsyncMock()
+    interaction.followup.send = AsyncMock()
+    await bot.tree.get_command("play").callback(interaction, query)
+    bot.player.request.assert_awaited_once_with(query, "Alice")
+    message = interaction.followup.send.call_args.args[0]
+    assert message.startswith(f"已接受點歌（{label}）：**好きだから。 - Sukidakara** — Yuika")
+    assert song.url in message
+    assert len(message) <= 1900
+    if error:
+        assert f"播放暫停：{error}" in message
+    elif paused:
+        assert "使用 /resume" in message
 
 
 @pytest.mark.parametrize("send_allowed", [True, False])

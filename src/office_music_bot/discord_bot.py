@@ -87,7 +87,8 @@ class MusicBot(discord.Client):
             if state.paused and not state.error:
                 status = "\n目前已暫停，使用 /resume 開始播放。"
             await interaction.followup.send(
-                f"已接受點歌：**{clean(request.song.title)}** — {clean(request.song.artist)}"
+                f"已接受點歌（{clean(query.strip(), 300)}）："
+                f"**{clean(request.song.title)}** — {clean(request.song.artist)}"
                 f"\n<{request.song.url}>{status}"[:1900]
             )
 

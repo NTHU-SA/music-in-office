@@ -336,3 +336,50 @@ test("link metadata waits for ad end and requested identity", async () => {
     f.ad(false);
     assert.equal((await pending).title, "Requested");
 });
+
+test("search reads song endpoints beyond the first title run and without a watch anchor", async () => {
+    for (const placement of ["run", "row", "overlay", "link"]) {
+        const f = fixture();
+        await f.run("initialize", {role: "search"});
+        const endpoint = {videoId: "bbbbbbbbbbb", watchEndpointMusicSupportedConfigs: {
+            watchEndpointMusicConfig: {musicVideoType: "MUSIC_VIDEO_TYPE_ATV"}
+        }};
+        const runs = [{text: "Song "}, {text: "title"}];
+        const data = {flexColumns: [{musicResponsiveListItemFlexColumnRenderer: {
+            text: {runs}
+        }}]};
+        if (placement === "run") runs[1].navigationEndpoint = {watchEndpoint: endpoint};
+        if (placement === "row") data.navigationEndpoint = {watchEndpoint: endpoint};
+        if (placement === "overlay") data.overlay = {musicItemThumbnailOverlayRenderer: {
+            content: {musicPlayButtonRenderer: {
+                playNavigationEndpoint: {watchEndpoint: endpoint}
+            }}
+        }};
+        const link = placement === "link" ? {
+            data: {navigationEndpoint: {watchEndpoint: endpoint}},
+            textContent: "Song title", getAttribute: () => "/watch?v=bbbbbbbbbbb"
+        } : null;
+        f.rows([{
+            data, getClientRects: () => [1],
+            querySelector: selector => selector.startsWith("a[") ? link : {textContent: "Artist"}
+        }]);
+        const song = await f.run("resolve", {isLink: false});
+        assert.equal(song.id, "bbbbbbbbbbb");
+        assert.equal(song.title, "Song title");
+        assert.equal(song.artist, "Artist");
+    }
+});
+
+test("search does not treat unclassified watch links as formal songs", async () => {
+    const f = fixture();
+    await f.run("initialize", {role: "search"});
+    f.rows([{
+        getClientRects: () => [1],
+        querySelector: () => ({
+            textContent: "Unknown video", getAttribute: () => "/watch?v=aaaaaaaaaaa"
+        })
+    }]);
+    const pending = assert.rejects(f.run("resolve", {isLink: false}), /No song found/);
+    f.time(15000);
+    await pending;
+});
