@@ -35,17 +35,23 @@ public partial class MainPageViewModel : ObservableObject
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanEdit))]
-    [NotifyCanExecuteChangedFor(nameof(StartCommand), nameof(StopCommand))]
+    [NotifyCanExecuteChangedFor(nameof(StartCommand), nameof(StopCommand), nameof(LoginCommand), nameof(FinishLoginCommand))]
     public partial bool IsRunning { get; set; }
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(CanEdit))]
-    [NotifyCanExecuteChangedFor(nameof(StartCommand), nameof(StopCommand))]
+    [NotifyCanExecuteChangedFor(nameof(StartCommand), nameof(StopCommand), nameof(LoginCommand), nameof(FinishLoginCommand))]
     public partial bool IsBusy { get; set; } = true;
 
-    public bool CanEdit => !IsRunning && !IsBusy;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanEdit))]
+    [NotifyCanExecuteChangedFor(nameof(StartCommand), nameof(StopCommand), nameof(LoginCommand), nameof(FinishLoginCommand))]
+    public partial bool IsAuthenticating { get; set; }
+
+    public bool CanEdit => !IsRunning && !IsBusy && !IsAuthenticating;
     private bool CanStart() => CanEdit;
-    private bool CanStop() => IsRunning && !IsBusy;
+    private bool CanStop() => (IsRunning || IsAuthenticating) && !IsBusy;
+    private bool CanFinishLogin() => IsAuthenticating && !IsBusy;
 
     public MainPageViewModel()
     {
@@ -126,7 +132,7 @@ public partial class MainPageViewModel : ObservableObject
         {
             IsRunning = true;
             ConnectionStatus = "正在連線";
-            ConnectionDetail = "正在連線至 Discord，成功後開啟專用 Edge。";
+            ConnectionDetail = "正在連線至 Discord，使用無視窗 Edge 播放。";
             var packet = await _backend.RequestAsync("start", Settings());
             _dirty = false;
             SavedStatus = packet.Message;
@@ -141,6 +147,40 @@ public partial class MainPageViewModel : ObservableObject
         finally { _saving.Release(); IsBusy = false; }
     }
 
+    [RelayCommand(CanExecute = nameof(CanStart))]
+    private async Task LoginAsync()
+    {
+        IsBusy = true;
+        HasError = false;
+        _sessionFailed = false;
+        _saveTimer.Stop();
+        await _saving.WaitAsync();
+        try
+        {
+            IsAuthenticating = true;
+            ConnectionStatus = "正在開啟登入視窗";
+            ConnectionDetail = "請自行登入 Google，完成後關閉登入視窗。登入期間請勿讓他人使用。";
+            if (_dirty)
+            {
+                var saved = await _backend.RequestAsync("save", Settings());
+                _dirty = false;
+                SavedStatus = saved.Message;
+            }
+            await _backend.RequestAsync("login");
+        }
+        catch (Exception exception)
+        {
+            _sessionFailed = true;
+            IsAuthenticating = false;
+            ConnectionStatus = "登入視窗未開啟";
+            ShowError(exception);
+        }
+        finally { _saving.Release(); IsBusy = false; }
+    }
+
+    [RelayCommand(CanExecute = nameof(CanFinishLogin))]
+    private Task FinishLoginAsync() => StopAsync();
+
     [RelayCommand(CanExecute = nameof(CanStop))]
     private async Task StopAsync()
     {
@@ -148,13 +188,14 @@ public partial class MainPageViewModel : ObservableObject
         try
         {
             ConnectionStatus = "正在停止";
-            ConnectionDetail = "正在關閉 bot 與專用 Edge，設定會保留。";
+            ConnectionDetail = "正在關閉 bot 與專用 Edge，設定與登入狀態會保留。";
             await _backend.RequestAsync("stop");
         }
         catch (Exception exception)
         {
             ShowError(exception);
             IsRunning = false;
+            IsAuthenticating = false;
         }
         finally { IsBusy = false; }
     }
@@ -164,6 +205,15 @@ public partial class MainPageViewModel : ObservableObject
         if (_closed) return;
         switch (packet.Kind)
         {
+            case "login_opening":
+            case "login_ready":
+                IsAuthenticating = true;
+                ConnectionStatus = packet.Kind == "login_ready" ? "請完成 YouTube 登入" : "正在開啟登入視窗";
+                ConnectionDetail = packet.Message;
+                break;
+            case "login_closed":
+                ConnectionDetail = packet.Message;
+                break;
             case "ready":
             case "paused":
                 IsRunning = true;
@@ -185,7 +235,7 @@ public partial class MainPageViewModel : ObservableObject
                 ConnectionStatus = "Discord 已連線";
                 PlaybackStatus = "播放需要處理";
                 ShowError(new BackendException(packet.Message +
-                    "\n處理 Edge 提示後使用 /resume，或停止後重新啟動。"));
+                    "\n可用 /resume 重試；若需要登入或處理網頁提示，請停止後按「YouTube 登入」。"));
                 break;
             case "error":
             case "engine_error":
@@ -193,15 +243,23 @@ public partial class MainPageViewModel : ObservableObject
                 SettingsExpanded = true;
                 ConnectionStatus = "連線已中斷";
                 ShowError(new BackendException(packet.Message));
-                if (packet.Kind == "engine_error") IsRunning = false;
+                if (packet.Kind == "engine_error")
+                {
+                    IsRunning = false;
+                    IsAuthenticating = false;
+                }
                 break;
             case "finished":
+                bool wasAuthenticating = IsAuthenticating;
+                IsAuthenticating = false;
                 IsRunning = false;
                 SettingsExpanded = true;
                 if (!_sessionFailed)
                 {
                     ConnectionStatus = "已停止";
-                    ConnectionDetail = "設定已保留。隨時可以重新啟動。";
+                    ConnectionDetail = wasAuthenticating ?
+                        "登入視窗已關閉；登入狀態如有建立會保留。按「儲存並啟動」開始無視窗播放。" :
+                        "設定已保留。隨時可以重新啟動。";
                     PlaybackStatus = "等待點歌";
                     SongTitle = "今天，想聽什麼？";
                     SongArtist = "在 Discord 使用 /play 開始播放。";

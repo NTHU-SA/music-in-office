@@ -239,8 +239,8 @@ class Player:
             observed = await self.browser.observe()
             if observed.error:
                 raise PlaybackError(
-                    "YouTube Music reports unavailable playback. Resolve the prompt in Edge "
-                    "then use /resume or /skip."
+                    "YouTube Music reports unavailable playback. Try /resume or /skip; "
+                    "if sign-in is required, stop the bot, use YouTube login, then restart."
                 )
             if self.paused:
                 await self.browser.pause()
@@ -336,8 +336,8 @@ class Player:
                 self._started_at = time.monotonic()
             elif time.monotonic() - self._started_at > 45:
                 raise PlaybackError(
-                    "Playback did not start or stalled. Check login, network or Play in Edge, "
-                    "then use /resume."
+                    "Playback did not start or stalled. Check the network and try /resume; "
+                    "if needed, stop the bot, use YouTube login to check playback, then restart."
                 )
             self._previous = observed
 

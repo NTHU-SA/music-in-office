@@ -43,6 +43,20 @@ if ($ScreenshotDirectory) {
 }
 Screenshot "winui-modern-initial"
 
+Assert-Enabled YouTubeLoginButton true
+Assert-Enabled FinishLoginButton false
+[void](Ui invoke YouTubeLoginButton)
+Assert-Value ConnectionStatus "請完成 YouTube 登入"
+Assert-Enabled StartButton false
+Assert-Enabled YouTubeLoginButton false
+Assert-Enabled ServerId false
+Assert-Enabled FinishLoginButton true
+[void](Ui invoke FinishLoginButton)
+Assert-Value ConnectionStatus "已停止"
+Assert-Enabled StartButton true
+Assert-Enabled YouTubeLoginButton true
+Assert-Enabled FinishLoginButton false
+
 Start-Scenario "123"
 Assert-Value ConnectionStatus "Discord 已連線"
 Assert-Value SongTitle "GUI fixture song"
@@ -52,6 +66,7 @@ Assert-Value PlaybackStatus "正在播放"
 Assert-Value QueueCount "待播 3 首"
 Assert-Value AutoplayStatus "自動推薦已開啟"
 Assert-Enabled StopButton true
+Assert-Enabled YouTubeLoginButton false
 Screenshot "winui-connected-fixture"
 [void](Ui invoke SettingsExpander --action expand)
 Assert-Enabled ServerId false
@@ -93,4 +108,4 @@ foreach ($FailureGuild in @("999", "888")) {
     Assert-Value SongTitle "GUI fixture song"
     Stop-Scenario
 }
-Write-Host "Native connection, metadata, queue, playback errors, fast failures, stop and engine restart passed."
+Write-Host "Native login, connection, metadata, queue, playback errors, stop and engine restart passed."

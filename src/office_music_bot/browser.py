@@ -182,20 +182,25 @@ class MusicBrowser:
         self.page: Page | None = None
         self.search_page: Page | None = None
 
-    async def start(self) -> None:
+    async def start(self, *, interactive: bool = False) -> None:
         try:
             self.playwright = await async_playwright().start()
             self.context = await self.playwright.chromium.launch_persistent_context(
                 str(self.directory / "edge-profile"),
                 channel="msedge",
-                headless=False,
+                headless=not interactive,
                 no_viewport=True,
+                ignore_default_args=["--mute-audio"],
+                args=["--autoplay-policy=no-user-gesture-required"],
             )
-            await self.context.add_init_script(GUARD_SCRIPT)
+            if not interactive:
+                await self.context.add_init_script(GUARD_SCRIPT)
             self.page = (
                 self.context.pages[0] if self.context.pages else await self.context.new_page()
             )
             await self.page.goto("https://music.youtube.com", wait_until="domcontentloaded")
+            if interactive:
+                return
             self.search_page = await self.context.new_page()
             await self.search_page.add_init_script(SEARCH_TAB_SCRIPT)
         except PlaywrightError as exc:
@@ -381,7 +386,8 @@ class MusicBrowser:
             )
         except PlaywrightError as exc:
             raise PlaybackError(
-                "Playback blocked. Manually press Play in the Edge music tab, then use /resume."
+                "Playback blocked. Stop the bot, open YouTube login to handle prompts "
+                "or test Play, then finish login and restart."
             ) from exc
 
     async def next_recommendation(self) -> None:

@@ -181,7 +181,7 @@ class MusicBot(discord.Client):
         self.tree.copy_global_to(guild=self.guild_object)
         await self.tree.sync(guild=self.guild_object)
         await self.browser.start()
-        log.info("Edge ready. Complete YouTube Music login/consent manually in the music tab.")
+        log.info("Headless Edge ready. Use the separate login workflow if sign-in is required.")
 
     async def on_ready(self) -> None:
         if self.worker is None:
@@ -217,8 +217,8 @@ class MusicBot(discord.Client):
     async def report_error(self, message: str) -> None:
         try:
             await self._send(
-                f"⚠️ 辦公室播放器暫停：{message}\n處理 Edge 提示後用 /resume；"
-                "若瀏覽器已關閉，請重新啟動 exe。"
+                f"⚠️ 辦公室播放器暫停：{message}\n可用 /resume 重試；"
+                "若需要登入或處理網頁提示，請由管理者停止 bot，使用「YouTube 登入」後重新啟動。"
             )
         except NotificationError as exc:
             log.error("Could not send playback error to Discord: %s", exc)

@@ -3,7 +3,7 @@ import io
 import json
 import threading
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import discord
 import pytest
@@ -190,6 +190,79 @@ def test_unexpected_backend_failure_is_recoverable(tmp_path):
     runner.thread.join(3)
     assert not runner.busy
     assert any("RuntimeError" in e.message for e in events(runner))
+
+
+def test_bridge_login_needs_no_discord_settings_and_cannot_overlap(tmp_path):
+    runner = BotRunner()
+    runner.start_login = Mock()
+    assert handle_request({"command": "login"}, tmp_path, runner)["ok"]
+    runner.start_login.assert_called_once_with(tmp_path)
+    runner.start_login.side_effect = ConfigurationError(
+        "Another OfficeMusicBot instance is already running."
+    )
+    assert not handle_request({"command": "login"}, tmp_path, runner)["ok"]
+
+
+@pytest.mark.parametrize("close_window", [False, True])
+async def test_login_closes_browser_without_connecting_discord(
+    tmp_path, monkeypatch, close_window
+):
+    page = Mock(is_closed=Mock(return_value=False))
+    browser = Mock(
+        context=SimpleNamespace(pages=[page]), start=AsyncMock(), close=AsyncMock()
+    )
+    monkeypatch.setattr("office_music_bot.runtime.MusicBrowser", Mock(return_value=browser))
+    runner = BotRunner(Mock(side_effect=AssertionError("Discord must not start")))
+    session = asyncio.create_task(runner._login_session(tmp_path))
+    try:
+        async with asyncio.timeout(2):
+            while not any(event.kind == "login_ready" for event in events(runner)):
+                await asyncio.sleep(0.01)
+        if close_window:
+            page.is_closed.return_value = True
+        else:
+            runner.stop()
+        await asyncio.wait_for(session, 2)
+        browser.start.assert_awaited_once_with(interactive=True)
+        browser.close.assert_awaited_once()
+        assert any(event.kind == "login_closed" for event in events(runner))
+    finally:
+        session.cancel()
+        await asyncio.gather(session, return_exceptions=True)
+
+
+async def test_stop_during_login_launch_cancels_and_closes_browser(tmp_path, monkeypatch):
+    opening = asyncio.Event()
+
+    async def start(**kwargs):
+        opening.set()
+        await asyncio.Future()
+
+    browser = Mock(start=start, close=AsyncMock())
+    monkeypatch.setattr("office_music_bot.runtime.MusicBrowser", Mock(return_value=browser))
+    runner = BotRunner()
+    session = asyncio.create_task(runner._login_session(tmp_path))
+    await asyncio.wait_for(opening.wait(), 2)
+    runner.stop()
+    await asyncio.wait_for(session, 2)
+    browser.close.assert_awaited_once()
+
+
+def test_login_session_shares_instance_lock_and_can_retry(tmp_path, monkeypatch):
+    from office_music_bot.config import InstanceLock
+
+    runner = BotRunner()
+    runner._login_session = AsyncMock()
+    with InstanceLock(tmp_path):
+        runner.start_login(tmp_path)
+        runner.thread.join(3)
+    assert not runner.busy
+    assert any(event.kind == "error" for event in events(runner))
+    runner._login_session.assert_not_awaited()
+    runner.start_login(tmp_path)
+    runner.thread.join(3)
+    runner._login_session.assert_awaited_once_with(tmp_path)
+    assert events(runner)[-1].kind == "finished"
 
 
 @pytest.mark.asyncio
